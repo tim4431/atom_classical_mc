@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atom-classical-mc"
+version = "0.1.0"
+description = "Classical Monte Carlo simulation of atom heating and loss in moving optical tweezers."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.23"]
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+viz = ["matplotlib>=3.7"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
