@@ -3,6 +3,8 @@
 Classical Monte Carlo tools for estimating Rb87 heating and loss during
 time-dependent optical tweezer transfer.
 
+![mc atom trajectories](demo/slm_to_aod_transfer_3d.png)
+
 The core library lives in `src/atom_classical_mc`. See `doc/plan.md` for the
 model assumptions and public API.
 
@@ -14,3 +16,5 @@ python3 example/slm_to_aod_transfer.py
 
 Install the optional plotting dependency and use `--plot` or `--save-plot` for
 trajectory, heating, survival, and ramp-sequence visualization.
+Use `--plot-3d` or `--save-3d-plot` for the standalone 3D atom trajectory and
+AOD center path view.

@@ -8,6 +8,7 @@ For plots, install the optional visualization dependency:
 
     python3 -m pip install -e ".[viz]"
     python3 example/slm_to_aod_transfer.py --plot
+    python3 example/slm_to_aod_transfer.py --save-3d-plot example/slm_to_aod_transfer_3d.png
 """
 
 from __future__ import annotations
@@ -34,7 +35,10 @@ from atom_classical_mc import (  # noqa: E402
     survival_probability_time_series,
     um,
 )
-from atom_classical_mc.visualization import plot_transfer_summary  # noqa: E402
+from atom_classical_mc.visualization import (  # noqa: E402
+    plot_transfer_summary,
+    plot_transfer_trajectories_3d,
+)
 
 
 def build_transfer_problem() -> (
@@ -99,6 +103,16 @@ def main() -> None:
         default=None,
         help="save the 6-panel Matplotlib summary plot to this path",
     )
+    parser.add_argument(
+        "--plot-3d",
+        action="store_true",
+        help="show the 3D atom trajectory and AOD path plot",
+    )
+    parser.add_argument(
+        "--save-3d-plot",
+        default=None,
+        help="save the 3D trajectory plot to this path",
+    )
     args = parser.parse_args()
 
     slm_trap, aod_trap_base, ramp, config = build_transfer_problem()
@@ -158,10 +172,22 @@ def main() -> None:
         figure.savefig(output_path, dpi=180)
         print(f"saved plot: {output_path}")
 
-        if args.plot:
-            import matplotlib.pyplot as plt
+    if args.plot_3d or args.save_3d_plot:
+        figure_3d, _ = plot_transfer_trajectories_3d(result, ramp, slm_trap)
+        if args.save_3d_plot:
+            output_path_3d = args.save_3d_plot
+        else:
+            output_path_3d = os.path.join(
+                os.path.dirname(__file__),
+                "slm_to_aod_transfer_3d.png",
+            )
+        figure_3d.savefig(output_path_3d, dpi=180)
+        print(f"saved 3D plot: {output_path_3d}")
 
-            plt.show()
+    if args.plot or args.plot_3d:
+        import matplotlib.pyplot as plt
+
+        plt.show()
 
 
 if __name__ == "__main__":

@@ -113,14 +113,11 @@ def plot_transfer_summary(
     kinetic_axis.set_ylabel("mean kinetic energy (uK)")
     kinetic_axis.set_title("Heating During Ramp")
 
-    loss_axis.plot(
-        times_ms,
-        loss_probability_time_series(result),
-        color="tab:red",
-    )
+    loss_probability = loss_probability_time_series(result)
+    loss_axis.plot(times_ms, loss_probability, color="tab:red")
     loss_axis.set_xlabel("time (ms)")
     loss_axis.set_ylabel("loss probability")
-    loss_axis.set_ylim(-0.02, 1.02)
+    loss_axis.set_ylim(0.0, _probability_axis_upper_limit(loss_probability))
     loss_axis.set_title("Loss = 1 - Survival")
 
     for axis_index, label in enumerate(("x", "y", "z")):
@@ -136,3 +133,119 @@ def plot_transfer_summary(
     depth_ramp_axis.set_title("AOD Depth Ramp")
 
     return figure, axes
+
+
+def plot_transfer_trajectories_3d(
+    result: SimulationResult,
+    ramp: RampSequence,
+    static_trap: TrapConfig | None = None,
+    max_trajectories: int = 96,
+):
+    """Plot atom trajectories and the moving AOD center path in 3D."""
+
+    if result.trajectory_times_s is None or result.trajectory_positions_m is None:
+        raise ValueError("Simulation was run without stored trajectories.")
+
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise ImportError(
+            "Matplotlib is required for plotting. Install with `pip install .[viz]`."
+        ) from exc
+
+    positions_um = result.trajectory_positions_m * 1.0e6
+    aod_centers_um = np.asarray([ramp.at(t)[0] for t in result.trajectory_times_s]) * 1.0e6
+
+    figure = plt.figure(figsize=(9, 8), constrained_layout=True)
+    axis = figure.add_subplot(111, projection="3d")
+
+    particle_count = positions_um.shape[1]
+    shown = min(max_trajectories, particle_count)
+    indices = np.linspace(0, particle_count - 1, shown, dtype=int)
+    for atom_index in indices:
+        axis.plot(
+            positions_um[:, atom_index, 0],
+            positions_um[:, atom_index, 1],
+            positions_um[:, atom_index, 2],
+            color="tab:blue",
+            alpha=0.22,
+            linewidth=0.8,
+        )
+
+    axis.plot(
+        aod_centers_um[:, 0],
+        aod_centers_um[:, 1],
+        aod_centers_um[:, 2],
+        color="tab:red",
+        linewidth=2.5,
+        label="AOD center",
+    )
+    axis.scatter(
+        aod_centers_um[-1:, 0],
+        aod_centers_um[-1:, 1],
+        aod_centers_um[-1:, 2],
+        color="tab:red",
+        s=36,
+        label="AOD final",
+    )
+    if static_trap is not None:
+        slm_center_um = np.asarray(static_trap.center_m, dtype=float) * 1.0e6
+        axis.scatter(
+            [slm_center_um[0]],
+            [slm_center_um[1]],
+            [slm_center_um[2]],
+            color="black",
+            marker="x",
+            s=60,
+            label="SLM center",
+        )
+    else:
+        slm_center_um = None
+
+    axis.set_xlabel("x (um)")
+    axis.set_ylabel("y (um)")
+    axis.set_zlabel("z (um)")
+    axis.set_title("3D Atom Trajectories and AOD Path")
+    axis.legend(loc="best")
+    _set_equal_3d_limits(axis, positions_um[:, indices], aod_centers_um, slm_center_um)
+
+    return figure, axis
+
+
+def _probability_axis_upper_limit(probability: np.ndarray) -> float:
+    finite_probability = np.asarray(probability, dtype=float)
+    finite_probability = finite_probability[np.isfinite(finite_probability)]
+    if finite_probability.size == 0:
+        return 0.01
+
+    peak = float(np.max(finite_probability))
+    if peak <= 0.0:
+        return 0.01
+    return min(1.0, max(0.01, 1.25 * peak))
+
+
+def _set_equal_3d_limits(axis, trajectory_points_um, aod_centers_um, slm_center_um) -> None:
+    point_sets = [
+        np.reshape(trajectory_points_um, (-1, 3)),
+        np.reshape(aod_centers_um, (-1, 3)),
+    ]
+    if slm_center_um is not None:
+        point_sets.append(np.reshape(slm_center_um, (1, 3)))
+
+    points = np.vstack(point_sets)
+    finite_points = points[np.all(np.isfinite(points), axis=1)]
+    if finite_points.size == 0:
+        return
+
+    minimum = np.min(finite_points, axis=0)
+    maximum = np.max(finite_points, axis=0)
+    center = 0.5 * (minimum + maximum)
+    half_range = 0.5 * float(np.max(maximum - minimum))
+    half_range = max(half_range, 0.5)
+    padding = 1.1 * half_range
+
+    axis.set_xlim(center[0] - padding, center[0] + padding)
+    axis.set_ylim(center[1] - padding, center[1] + padding)
+    axis.set_zlim(center[2] - padding, center[2] + padding)
+    if hasattr(axis, "set_box_aspect"):
+        axis.set_box_aspect((1.0, 1.0, 1.0))
