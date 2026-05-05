@@ -14,5 +14,5 @@ license = { text = "MIT" }
 [project.optional-dependencies]
 viz = ["matplotlib>=3.7"]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+packages = ["src"]

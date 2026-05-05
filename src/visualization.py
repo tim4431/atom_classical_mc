@@ -8,6 +8,7 @@ from .analysis import (
     loss_probability_time_series,
     mean_kinetic_energy_time_series_uK,
 )
+from .harmonic import MotionalDecomposition
 from .ramp import RampSequence
 from .simulation import SimulationResult
 from .trap import TrapConfig
@@ -139,10 +140,13 @@ def plot_transfer_trajectory_summary(
 
 def plot_transfer_energy_summary(
     result: SimulationResult,
-    initial_mode_summary: dict[str, dict[str, float]] | None = None,
-    final_mode_summary: dict[str, dict[str, float]] | None = None,
+    initial_modes: MotionalDecomposition | None = None,
+    final_modes: MotionalDecomposition | None = None,
+    initial_mask: np.ndarray | None = None,
+    final_mask: np.ndarray | None = None,
+    occupation_bins: int = 48,
 ):
-    """Create a 2x2 heating/loss/motional-occupation summary figure."""
+    """Create a 2x2 heating/loss/motional-occupation distribution figure."""
 
     if result.trajectory_times_s is None:
         raise ValueError("Simulation was run without stored trajectories.")
@@ -177,15 +181,19 @@ def plot_transfer_energy_summary(
     loss_axis.set_ylim(0.0, _probability_axis_upper_limit(loss_probability))
     loss_axis.set_title("Loss = 1 - Survival")
 
-    _plot_mode_occupation_summary(
+    _plot_mode_occupation_distribution(
         initial_mode_axis,
-        initial_mode_summary,
+        initial_modes,
         "Initial SLM Motional Occupation",
+        mask=initial_mask,
+        bins=occupation_bins,
     )
-    _plot_mode_occupation_summary(
+    _plot_mode_occupation_distribution(
         final_mode_axis,
-        final_mode_summary,
+        final_modes,
         "Final AOD Motional Occupation",
+        mask=final_mask,
+        bins=occupation_bins,
     )
 
     return figure, axes
@@ -280,10 +288,17 @@ def _probability_axis_upper_limit(probability: np.ndarray) -> float:
     return min(1.0, max(0.01, 1.25 * peak))
 
 
-def _plot_mode_occupation_summary(axis, summary, title: str) -> None:
+def _plot_mode_occupation_distribution(
+    axis,
+    decomposition: MotionalDecomposition | None,
+    title: str,
+    mask: np.ndarray | None = None,
+    bins: int = 48,
+) -> None:
     axis.set_title(title)
-    axis.set_ylabel("mean occupation n")
-    if not summary:
+    axis.set_xlabel("occupation estimate n")
+    axis.set_ylabel("probability")
+    if decomposition is None:
         axis.text(
             0.5,
             0.5,
@@ -296,18 +311,58 @@ def _plot_mode_occupation_summary(axis, summary, title: str) -> None:
         axis.set_yticks([])
         return
 
-    labels = list(summary.keys())
-    means = np.asarray([summary[label]["mean"] for label in labels], dtype=float)
-    medians = np.asarray([summary[label]["median"] for label in labels], dtype=float)
-    x = np.arange(len(labels))
-    axis.bar(x, means, color="tab:blue", alpha=0.75, label="mean")
-    axis.scatter(x, medians, color="black", marker="_", s=160, label="median")
-    axis.set_xticks(x)
-    axis.set_xticklabels(labels, rotation=20, ha="right")
-    finite_means = means[np.isfinite(means)]
-    if finite_means.size > 0:
-        axis.set_ylim(0.0, max(1.0, 1.2 * float(np.max(finite_means))))
+    occupations = np.asarray(decomposition.mean_occupations, dtype=float)
+    if mask is not None:
+        occupations = occupations[np.asarray(mask, dtype=bool)]
+    occupations = occupations[np.all(np.isfinite(occupations), axis=1)]
+    if occupations.size == 0:
+        axis.text(
+            0.5,
+            0.5,
+            "no atoms",
+            ha="center",
+            va="center",
+            transform=axis.transAxes,
+        )
+        axis.set_xticks([])
+        axis.set_yticks([])
+        return
+
+    x_max = _occupation_axis_upper_limit(occupations)
+    edges = np.linspace(0.0, x_max, bins + 1)
+    clipped = np.clip(occupations, edges[0], edges[-1])
+    for mode_index, label in enumerate(decomposition.mode_labels):
+        counts, _ = np.histogram(clipped[:, mode_index], bins=edges)
+        probability = counts / np.sum(counts)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        axis.step(
+            centers,
+            probability,
+            where="mid",
+            linewidth=1.8,
+            label=label,
+        )
+        axis.fill_between(
+            centers,
+            probability,
+            step="mid",
+            alpha=0.12,
+        )
+
+    axis.set_xlim(0.0, x_max)
+    axis.set_ylim(bottom=0.0)
     axis.legend(loc="best")
+
+
+def _occupation_axis_upper_limit(occupations: np.ndarray) -> float:
+    finite = occupations[np.isfinite(occupations)]
+    if finite.size == 0:
+        return 1.0
+    upper = float(np.percentile(finite, 99.5))
+    maximum = float(np.max(finite))
+    if maximum <= 20.0:
+        return max(1.0, np.ceil(maximum))
+    return max(1.0, np.ceil(min(maximum, upper)))
 
 
 def _set_equal_3d_limits(axis, trajectory_points_um, aod_centers_um, slm_center_um) -> None:

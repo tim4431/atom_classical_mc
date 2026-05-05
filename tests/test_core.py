@@ -5,34 +5,32 @@ import unittest
 import numpy as np
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(ROOT, "src"))
+sys.path.insert(0, ROOT)
 
-from atom_classical_mc import (  # noqa: E402
-    RampSequence,
-    SimulationConfig,
-    TrapConfig,
-    approximate_harmonic_potential,
-    approximate_harmonic_potential_from_callable,
-    ms,
-    run_simulation,
-    sample_thermal_velocities,
+from src.analysis import (  # noqa: E402
     capture_probability,
     classify_final_trap_occupation,
-    coherent_fock_probabilities,
-    decompose_motion_into_harmonic_modes,
     loss_probability_time_series,
     mean_kinetic_energy_time_series_uK,
-    summarize_mode_occupations,
     survival_probability_time_series,
-    total_force,
-    total_potential,
-    um,
 )
-from atom_classical_mc.constants import (  # noqa: E402
+from src.constants import (  # noqa: E402
     BOLTZMANN_CONSTANT_J_PER_K,
     HBAR_J_S,
     RB87_MASS_KG,
 )
+from src.harmonic import (  # noqa: E402
+    approximate_harmonic_potential,
+    approximate_harmonic_potential_from_callable,
+    coherent_fock_probabilities,
+    decompose_motion_into_harmonic_modes,
+    summarize_mode_occupations,
+)
+from src.ramp import RampSequence  # noqa: E402
+from src.sampling import sample_thermal_velocities  # noqa: E402
+from src.simulation import SimulationConfig, run_simulation  # noqa: E402
+from src.trap import TrapConfig, total_force, total_potential  # noqa: E402
+from src.units import ms, um  # noqa: E402
 
 
 class CorePhysicsTests(unittest.TestCase):

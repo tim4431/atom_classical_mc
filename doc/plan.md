@@ -101,7 +101,10 @@ The main workflow is:
   - `_traj`: ensemble trajectories, mean atom position, AOD position ramp, AOD
     depth ramp.
   - `_energy`: mean kinetic energy, loss probability, initial SLM motional
-    occupation, final AOD motional occupation.
+    occupation distributions, final AOD motional occupation distributions.
+- Compare multiple AOD position ramp profiles under identical trap, depth, and
+  random-seed conditions. The example includes linear, cubic smoothstep,
+  quintic minimum-jerk, and sinusoidal profiles.
 - Keep Matplotlib optional: the simulator can run headless, while
   `example/slm_to_aod_transfer.py --plot` produces the diagnostic figures when
   the optional visualization dependency is installed.
