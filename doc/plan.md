@@ -39,6 +39,9 @@ The main workflow is:
 - Initial positions are sampled from a local harmonic approximation to the
   initial combined trap. The Hessian of the Gaussian potential at the selected
   initial center determines the covariance.
+- By default, initially unbound samples are rejected and resampled. This models
+  an ensemble conditioned on successful SLM loading, so the reported loss is
+  loss induced during the ramp rather than bad initial loading.
 - By default, the initial center is the deepest trap center at `t = 0`; users
   may override it through `SimulationConfig.initial_center_m`.
 
@@ -55,6 +58,9 @@ The main workflow is:
   lost flags, and optional sampled position/velocity/loss trajectories.
 - `analysis.py`: helper functions for kinetic energy traces, survival traces,
   and final capture probability in a specified trap.
+- `harmonic.py`: helper functions for approximating trap potentials as harmonic
+  normal modes and decomposing atom phase-space coordinates into motional
+  occupation estimates.
 - `visualization.py`: optional Matplotlib helper for a compact transfer summary
   figure.
 
@@ -71,17 +77,34 @@ The main workflow is:
   that survives and is bound to the final AOD trap considered by itself. This is
   a practical classical capture proxy for the SLM-to-AOD transition.
 
+## Harmonic Motional-State Analysis
+
+- Approximate a potential near a chosen point with
+  `U(r) ~= U(c) + grad U(c).(r-c) + 1/2 (r-c)^T K (r-c)`.
+- Diagonalize `K / m` to obtain normal-mode axes and angular frequencies.
+- For Gaussian tweezers, the modes are labeled as axial or radial by their
+  dominant lab-frame axis.
+- Decompose atom motion in the harmonic basis using relative trap-frame
+  velocity, then report per-mode classical oscillator energy and
+  coherent-state/semi-classical occupation `nbar = E / (hbar omega)`.
+- A classical trajectory is not itself a quantum eigenstate; the reported
+  nearest quantum number and optional Fock probabilities are an approximate
+  harmonic/coherent-state diagnostic.
+
 ## Visualization
 
 - Store trajectory positions to show the ensemble following, lagging, or
   escaping the moving AOD tweezer.
 - Store trajectory velocities and loss masks to plot mean kinetic energy and
   survival probability versus time.
-- Plot the AOD center/depth ramp next to the atom response so ramp features can
-  be compared directly with heating and loss.
+- Write separate 2D diagnostic figures with suffixes:
+  - `_traj`: ensemble trajectories, mean atom position, AOD position ramp, AOD
+    depth ramp.
+  - `_energy`: mean kinetic energy, loss probability, initial SLM motional
+    occupation, final AOD motional occupation.
 - Keep Matplotlib optional: the simulator can run headless, while
-  `example/slm_to_aod_transfer.py --plot` produces the summary figure when the
-  optional visualization dependency is installed.
+  `example/slm_to_aod_transfer.py --plot` produces the diagnostic figures when
+  the optional visualization dependency is installed.
 
 ## Test Plan
 

@@ -15,6 +15,15 @@ python3 example/slm_to_aod_transfer.py
 ```
 
 Install the optional plotting dependency and use `--plot` or `--save-plot` for
-trajectory, heating, survival, and ramp-sequence visualization.
+2D diagnostics. The example writes separate suffixed figures: `_traj` for
+trajectory/ramp geometry and `_energy` for heating/loss/motional occupations.
 Use `--plot-3d` or `--save-3d-plot` for the standalone 3D atom trajectory and
 AOD center path view.
+
+The example also prints harmonic radial/axial trap frequencies and motional
+occupation estimates for atoms decomposed in the initial SLM trap and final AOD
+trap basis.
+
+By default, the simulator rejects and resamples atoms that are already unbound
+in the initial trap, so reported loss is conditioned on successful initial
+loading.

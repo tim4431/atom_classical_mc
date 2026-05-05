@@ -11,19 +11,28 @@ from atom_classical_mc import (  # noqa: E402
     RampSequence,
     SimulationConfig,
     TrapConfig,
+    approximate_harmonic_potential,
+    approximate_harmonic_potential_from_callable,
     ms,
     run_simulation,
     sample_thermal_velocities,
     capture_probability,
     classify_final_trap_occupation,
+    coherent_fock_probabilities,
+    decompose_motion_into_harmonic_modes,
     loss_probability_time_series,
     mean_kinetic_energy_time_series_uK,
+    summarize_mode_occupations,
     survival_probability_time_series,
     total_force,
     total_potential,
     um,
 )
-from atom_classical_mc.constants import BOLTZMANN_CONSTANT_J_PER_K, RB87_MASS_KG  # noqa: E402
+from atom_classical_mc.constants import (  # noqa: E402
+    BOLTZMANN_CONSTANT_J_PER_K,
+    HBAR_J_S,
+    RB87_MASS_KG,
+)
 
 
 class CorePhysicsTests(unittest.TestCase):
@@ -120,6 +129,86 @@ class CorePhysicsTests(unittest.TestCase):
         result = run_simulation(static_trap, moving_base, ramp, config)
         self.assertGreater(result.survival_probability, 0.98)
         self.assertLess(abs(result.mean_energy_gain_uK), 0.15)
+        self.assertEqual(result.initial_positions_m.shape, (128, 3))
+        self.assertEqual(result.initial_velocities_m_per_s.shape, (128, 3))
+        self.assertTrue(np.all(result.initial_energies_uK < 0.0))
+
+    def test_harmonic_approximation_and_mode_decomposition(self):
+        trap = TrapConfig(
+            center_m=[0.0, 0.0, 0.0],
+            waist_radial_m=float(um(1.0)),
+            waist_axial_m=float(um(5.0)),
+            depth_uK=100.0,
+        )
+        approximation = approximate_harmonic_potential(
+            trap,
+            trap.center_m,
+            mass_kg=RB87_MASS_KG,
+        )
+
+        expected_stiffness = 4.0 * trap.depth_joule / trap.waist_radial_m**2
+        expected_omega = np.sqrt(expected_stiffness / RB87_MASS_KG)
+        radial_indices = [
+            index
+            for index, label in enumerate(approximation.mode_labels)
+            if label.startswith("radial")
+        ]
+        self.assertEqual(len(radial_indices), 2)
+        np.testing.assert_allclose(
+            approximation.angular_frequencies_rad_s[radial_indices],
+            expected_omega,
+            rtol=1.0e-12,
+        )
+        self.assertLess(approximation.gradient_norm_n, 1.0e-30)
+
+        positions = np.zeros((2, 3), dtype=float)
+        velocities = np.zeros((2, 3), dtype=float)
+        radial_index = radial_indices[0]
+        one_quantum_amplitude = np.sqrt(
+            2.0 * HBAR_J_S / (RB87_MASS_KG * expected_omega)
+        )
+        positions[1] = one_quantum_amplitude * approximation.mode_axes[:, radial_index]
+        decomposition = decompose_motion_into_harmonic_modes(
+            approximation,
+            positions,
+            velocities,
+        )
+
+        np.testing.assert_allclose(decomposition.mean_occupations[0], np.zeros(3))
+        self.assertAlmostEqual(decomposition.mean_occupations[1, radial_index], 1.0)
+        self.assertEqual(decomposition.nearest_quantum_numbers[1, radial_index], 1)
+
+        summary = summarize_mode_occupations(decomposition)
+        self.assertIn(approximation.mode_labels[radial_index], summary)
+        probabilities = coherent_fock_probabilities(
+            decomposition.mean_occupations[1, radial_index],
+            max_n=4,
+        )
+        expected = np.exp(-1.0) * np.array([1.0, 1.0, 0.5, 1.0 / 6.0, 1.0 / 24.0])
+        np.testing.assert_allclose(probabilities, expected)
+
+    def test_callable_harmonic_approximation_matches_quadratic_potential(self):
+        stiffness = np.diag([2.0e-18, 3.0e-18, 5.0e-19])
+        center = np.array([0.2e-6, -0.1e-6, 0.05e-6])
+
+        def potential(position_m):
+            offset = np.asarray(position_m, dtype=float) - center
+            return 1.0e-30 + 0.5 * offset @ stiffness @ offset
+
+        approximation = approximate_harmonic_potential_from_callable(
+            potential,
+            center,
+            finite_difference_step_m=1.0e-8,
+            mass_kg=RB87_MASS_KG,
+            mode_labels=("x", "z", "y"),
+        )
+
+        np.testing.assert_allclose(
+            np.sort(approximation.angular_frequencies_rad_s),
+            np.sort(np.sqrt(np.diag(stiffness) / RB87_MASS_KG)),
+            rtol=1.0e-10,
+        )
+        self.assertLess(approximation.gradient_norm_n, 1.0e-32)
 
     def test_stored_trajectories_include_visualization_series(self):
         static_trap = TrapConfig(
@@ -160,6 +249,7 @@ class CorePhysicsTests(unittest.TestCase):
         self.assertIsNotNone(result.trajectory_lost)
         self.assertEqual(result.trajectory_positions_m.shape[-2:], (32, 3))
         self.assertEqual(result.trajectory_velocities_m_per_s.shape[-2:], (32, 3))
+        self.assertFalse(np.any(result.trajectory_lost[0]))
 
         survival = survival_probability_time_series(result)
         loss = loss_probability_time_series(result)

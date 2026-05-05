@@ -1,6 +1,7 @@
 """Physical constants used by the simulator."""
 
 BOLTZMANN_CONSTANT_J_PER_K = 1.380649e-23
+HBAR_J_S = 1.054571817e-34
 ATOMIC_MASS_UNIT_KG = 1.66053906660e-27
 
 # Rubidium-87 atomic mass. The isotope mass is more accurate than using 87 amu.

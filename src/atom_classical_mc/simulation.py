@@ -28,6 +28,8 @@ class SimulationConfig:
     loss_radius_m: float | None = None
     boundary_center_m: ArrayLike = (0.0, 0.0, 0.0)
     initial_center_m: ArrayLike | None = None
+    reject_initially_lost: bool = True
+    max_initial_resampling_rounds: int = 100
     store_trajectories: bool = False
     trajectory_stride: int = 1
 
@@ -46,6 +48,8 @@ class SimulationConfig:
             raise ValueError("loss_radius_m must be positive when provided.")
         if self.trajectory_stride <= 0:
             raise ValueError("trajectory_stride must be positive.")
+        if self.max_initial_resampling_rounds <= 0:
+            raise ValueError("max_initial_resampling_rounds must be positive.")
 
         boundary_center = np.asarray(self.boundary_center_m, dtype=float)
         if boundary_center.shape != (3,):
@@ -72,9 +76,13 @@ class SimulationResult:
     initial_energies_uK: NDArray[np.float64]
     final_energies_uK: NDArray[np.float64]
     energy_gains_uK: NDArray[np.float64]
+    initial_positions_m: NDArray[np.float64]
+    initial_velocities_m_per_s: NDArray[np.float64]
     final_positions_m: NDArray[np.float64]
     final_velocities_m_per_s: NDArray[np.float64]
     lost: NDArray[np.bool_]
+    initial_rejected_count: int = 0
+    initial_rejection_fraction: float = 0.0
     trajectory_times_s: NDArray[np.float64] | None = None
     trajectory_positions_m: NDArray[np.float64] | None = None
     trajectory_velocities_m_per_s: NDArray[np.float64] | None = None
@@ -107,10 +115,21 @@ def run_simulation(
         rng,
         mass_kg=config.mass_kg,
     )
+    initial_rejected_count = 0
+    if config.reject_initially_lost:
+        positions, velocities, initial_rejected_count = _resample_initially_lost(
+            initial_traps,
+            positions,
+            velocities,
+            config,
+            rng,
+        )
+    initial_positions = positions.copy()
+    initial_velocities = velocities.copy()
 
     initial_energies_j = _mechanical_energy(initial_traps, positions, velocities, config.mass_kg)
     final_energies_j = initial_energies_j.copy()
-    lost = (initial_energies_j >= 0.0) | _outside_boundary(positions, config)
+    lost = _initial_lost_flags(initial_traps, positions, velocities, config)
 
     trajectory_times: list[float] = []
     trajectory_positions: list[NDArray[np.float64]] = []
@@ -223,9 +242,17 @@ def run_simulation(
         initial_energies_uK=initial_energies_uK,
         final_energies_uK=final_energies_uK,
         energy_gains_uK=energy_gains_uK,
+        initial_positions_m=initial_positions,
+        initial_velocities_m_per_s=initial_velocities,
         final_positions_m=positions,
         final_velocities_m_per_s=velocities,
         lost=lost,
+        initial_rejected_count=initial_rejected_count,
+        initial_rejection_fraction=(
+            initial_rejected_count / (config.ensemble_size + initial_rejected_count)
+            if initial_rejected_count > 0
+            else 0.0
+        ),
         trajectory_times_s=(
             np.asarray(trajectory_times, dtype=float) if config.store_trajectories else None
         ),
@@ -259,6 +286,60 @@ def _append_trajectory_sample(
     trajectory_positions.append(positions_m.copy())
     trajectory_velocities.append(velocities_m_per_s.copy())
     trajectory_lost.append(lost.copy())
+
+
+def _resample_initially_lost(
+    initial_traps: list[TrapConfig],
+    positions_m: NDArray[np.float64],
+    velocities_m_per_s: NDArray[np.float64],
+    config: SimulationConfig,
+    rng: np.random.Generator,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], int]:
+    rejected_count = 0
+    lost = _initial_lost_flags(initial_traps, positions_m, velocities_m_per_s, config)
+    for _ in range(config.max_initial_resampling_rounds):
+        if not np.any(lost):
+            return positions_m, velocities_m_per_s, rejected_count
+
+        count = int(np.sum(lost))
+        rejected_count += count
+        positions_m[lost] = sample_thermal_positions_harmonic(
+            initial_traps,
+            config.initial_temperature_uK,
+            count,
+            rng,
+            center_m=config.initial_center_m,
+        )
+        velocities_m_per_s[lost] = sample_thermal_velocities(
+            config.initial_temperature_uK,
+            count,
+            rng,
+            mass_kg=config.mass_kg,
+        )
+        lost = _initial_lost_flags(initial_traps, positions_m, velocities_m_per_s, config)
+
+    remaining = int(np.sum(lost))
+    raise RuntimeError(
+        "Could not sample a fully bound initial ensemble after "
+        f"{config.max_initial_resampling_rounds} resampling rounds; "
+        f"{remaining} atoms remain initially lost. Increase trap depth, lower "
+        "temperature, or set reject_initially_lost=False."
+    )
+
+
+def _initial_lost_flags(
+    traps: list[TrapConfig],
+    positions_m: NDArray[np.float64],
+    velocities_m_per_s: NDArray[np.float64],
+    config: SimulationConfig,
+) -> NDArray[np.bool_]:
+    initial_energies_j = _mechanical_energy(
+        traps,
+        positions_m,
+        velocities_m_per_s,
+        config.mass_kg,
+    )
+    return (initial_energies_j >= 0.0) | _outside_boundary(positions_m, config)
 
 
 def _moving_trap_at(

@@ -26,18 +26,22 @@ from atom_classical_mc import (  # noqa: E402
     RampSequence,
     SimulationConfig,
     TrapConfig,
+    approximate_harmonic_potential,
     capture_probability,
     classify_final_trap_occupation,
+    decompose_motion_into_harmonic_modes,
     loss_probability_time_series,
     mean_kinetic_energy_time_series_uK,
     ms,
     run_simulation,
+    summarize_mode_occupations,
     survival_probability_time_series,
     um,
 )
 from atom_classical_mc.visualization import (  # noqa: E402
-    plot_transfer_summary,
+    plot_transfer_energy_summary,
     plot_transfer_trajectories_3d,
+    plot_transfer_trajectory_summary,
 )
 
 
@@ -93,6 +97,31 @@ def build_transfer_problem() -> (
     return slm_trap, aod_trap_base, ramp, config
 
 
+def _print_harmonic_summary(label, approximation) -> None:
+    print(label)
+    for mode_label, frequency_hz in zip(
+        approximation.mode_labels,
+        approximation.frequencies_hz,
+    ):
+        print(f"  {mode_label}: {frequency_hz / 1.0e3:.3f} kHz")
+
+
+def _print_occupation_summary(label, summary) -> None:
+    print(label)
+    for mode_label, stats in summary.items():
+        print(
+            f"  {mode_label}: mean={stats['mean']:.3f}, "
+            f"median={stats['median']:.3f}, std={stats['std']:.3f}"
+        )
+
+
+def _suffixed_plot_path(path: str, suffix: str) -> str:
+    root, extension = os.path.splitext(path)
+    if not extension:
+        extension = ".png"
+    return f"{root}_{suffix}{extension}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -101,7 +130,7 @@ def main() -> None:
     parser.add_argument(
         "--save-plot",
         default=None,
-        help="save the 6-panel Matplotlib summary plot to this path",
+        help="base path for 2D plots; writes *_traj and *_energy files",
     )
     parser.add_argument(
         "--plot-3d",
@@ -141,6 +170,32 @@ def main() -> None:
     survival_trace = survival_probability_time_series(result)
     loss_trace = loss_probability_time_series(result)
 
+    initial_slm_harmonic = approximate_harmonic_potential(
+        slm_trap,
+        slm_trap.center_m,
+        mass_kg=config.mass_kg,
+    )
+    final_aod_harmonic = approximate_harmonic_potential(
+        final_aod_trap,
+        final_aod_trap.center_m,
+        mass_kg=config.mass_kg,
+    )
+    initial_slm_modes = decompose_motion_into_harmonic_modes(
+        initial_slm_harmonic,
+        result.initial_positions_m,
+        result.initial_velocities_m_per_s,
+    )
+    final_aod_modes = decompose_motion_into_harmonic_modes(
+        final_aod_harmonic,
+        result.final_positions_m,
+        result.final_velocities_m_per_s,
+    )
+    initial_slm_mode_summary = summarize_mode_occupations(initial_slm_modes)
+    final_aod_mode_summary = summarize_mode_occupations(
+        final_aod_modes,
+        mask=occupation.aod_mask,
+    )
+
     print("SLM-to-AOD transfer simulation")
     print(f"ensemble size: {config.ensemble_size}")
     print(f"initial temperature: {config.initial_temperature_uK:.3f} uK")
@@ -162,15 +217,33 @@ def main() -> None:
     print(f"final mean kinetic energy: {kinetic_trace_uK[-1]:.4f} uK")
     print(f"stored final survival: {survival_trace[-1]:.4f}")
     print(f"stored final loss: {loss_trace[-1]:.4f}")
+    print(f"initial rejected thermal draws: {result.initial_rejected_count}")
+    print(f"initial rejection fraction: {result.initial_rejection_fraction:.4f}")
+    _print_harmonic_summary("initial SLM harmonic modes", initial_slm_harmonic)
+    _print_occupation_summary("initial SLM mean n", initial_slm_mode_summary)
+    _print_harmonic_summary("final AOD harmonic modes", final_aod_harmonic)
+    _print_occupation_summary(
+        "final AOD mean n for AOD-only atoms",
+        final_aod_mode_summary,
+    )
 
     if args.plot or args.save_plot:
-        figure, _ = plot_transfer_summary(result, ramp, slm_trap)
-        if args.save_plot:
-            output_path = args.save_plot
-        else:
-            output_path = os.path.join(os.path.dirname(__file__), "slm_to_aod_transfer.png")
-        figure.savefig(output_path, dpi=180)
-        print(f"saved plot: {output_path}")
+        output_base = args.save_plot or os.path.join(
+            os.path.dirname(__file__),
+            "slm_to_aod_transfer.png",
+        )
+        trajectory_figure, _ = plot_transfer_trajectory_summary(result, ramp, slm_trap)
+        energy_figure, _ = plot_transfer_energy_summary(
+            result,
+            initial_mode_summary=initial_slm_mode_summary,
+            final_mode_summary=final_aod_mode_summary,
+        )
+        trajectory_path = _suffixed_plot_path(output_base, "traj")
+        energy_path = _suffixed_plot_path(output_base, "energy")
+        trajectory_figure.savefig(trajectory_path, dpi=180)
+        energy_figure.savefig(energy_path, dpi=180)
+        print(f"saved trajectory plot: {trajectory_path}")
+        print(f"saved energy plot: {energy_path}")
 
     if args.plot_3d or args.save_3d_plot:
         figure_3d, _ = plot_transfer_trajectories_3d(result, ramp, slm_trap)
