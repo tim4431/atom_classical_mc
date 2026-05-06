@@ -34,7 +34,7 @@ from src.harmonic import (  # noqa: E402
 )
 from src.ramp import RampSequence  # noqa: E402
 from src.simulation import SimulationConfig, run_simulation  # noqa: E402
-from src.trap import TrapConfig  # noqa: E402
+from src.trap import GaussianTrap  # noqa: E402
 from src.units import ms, um  # noqa: E402
 from src.visualization import (  # noqa: E402
     plot_transfer_energy_summary,
@@ -51,16 +51,16 @@ MOVING_DEPTH_UK = 200.0
 
 
 def build_transfer_problem() -> (
-    tuple[TrapConfig, TrapConfig, RampSequence, SimulationConfig]
+    tuple[GaussianTrap, GaussianTrap, RampSequence, SimulationConfig]
 ):
-    static_slm_trap = TrapConfig(
+    static_slm_trap = GaussianTrap(
         center_m=um([0.0, 0.0, 0.0]),
         waist_radial_m=float(um(WAIST_RADIAL_UM)),
         waist_axial_m=float(um(WAIST_AXIAL_UM)),
         depth_uK=STATIC_DEPTH_UK,
         name="static SLM",
     )
-    moving_slm_trap_base = TrapConfig(
+    moving_slm_trap_base = GaussianTrap(
         center_m=um([0.0, 0.0, 0.0]),
         waist_radial_m=float(um(WAIST_RADIAL_UM)),
         waist_axial_m=float(um(WAIST_AXIAL_UM)),

@@ -1,17 +1,19 @@
 # Source Function Index
 
-Compact one-line descriptions of functions and methods in the local `src` package.
+Compact one-line descriptions of functions, classes, and methods in the local
+`src` package.
 
 ## `analysis.py`
 
 - `kinetic_energy_uK`: Convert per-atom velocities into kinetic energies in microkelvin units.
-- `bound_to_trap`: Test whether atoms are classically bound to one trap.
+- `bound_to_trap`: Test whether atoms are classically bound to one trap at a chosen time.
 - `single_trap_energy_uK`: Compute lab-frame mechanical energy in a single-trap potential.
 - `capture_probability`: Compute final survival-and-bound probability for a target trap.
 - `classify_final_trap_occupation`: Classify final atoms as SLM-only, AOD-only, ambiguous, unbound, or lost.
 - `survival_probability_time_series`: Compute survival probability at each stored trajectory time.
 - `loss_probability_time_series`: Compute loss probability as `1 - survival`.
 - `mean_kinetic_energy_time_series_uK`: Compute mean kinetic energy versus stored trajectory time.
+- `snapshot_moving_trap`: Return a static `GaussianTrap` snapshot of a `MovingGaussianTrap` at one time.
 
 ## `harmonic.py`
 
@@ -21,62 +23,58 @@ Compact one-line descriptions of functions and methods in the local `src` packag
 - `MotionalDecomposition.mode_labels`: Return labels for the harmonic normal modes.
 - `MotionalDecomposition.angular_frequencies_rad_s`: Return angular normal-mode frequencies.
 - `MotionalDecomposition.frequencies_hz`: Return normal-mode frequencies in hertz.
-- `approximate_harmonic_potential`: Build an analytic harmonic approximation from trap objects.
+- `approximate_harmonic_potential`: Build an analytic harmonic approximation from trap objects at a chosen time.
 - `approximate_harmonic_potential_from_callable`: Build a finite-difference harmonic approximation from a generic potential function.
-- `_build_harmonic_approximation`: Construct a harmonic approximation from offset, gradient, and Hessian.
-- `_evaluate_potential_scalar`: Evaluate a potential callback at one position as a scalar.
 - `decompose_motion_into_harmonic_modes`: Project atom phase-space coordinates into harmonic normal modes.
 - `coherent_fock_probabilities`: Compute coherent-state Fock probabilities from mean occupations.
 - `summarize_mode_occupations`: Summarize per-mode occupation distributions with mean, median, and standard deviation.
-- `_default_mode_labels`: Label normal modes by their dominant lab-frame axis.
 
 ## `ramp.py`
 
+- `PolynomialConnector`: Smooth interpolation kernel between two waypoints, exposing value and derivative.
+- `LINEAR`, `CUBIC_SMOOTHSTEP`, `QUINTIC_MIN_JERK`: Built-in `PolynomialConnector` profiles.
+- `arb_fifth_poly`: Quintic family parameterized by `beta`; matches min-jerk at `beta = 15/8`.
+- `const_jerk`: Cubic-jerk connector from `aod_slm_movement_v2`.
 - `RampSequence.__post_init__`: Validate and normalize ramp time, center, and depth arrays.
-- `RampSequence.start_time_s`: Return the first ramp time.
-- `RampSequence.end_time_s`: Return the last ramp time.
+- `RampSequence.start_time_s` / `end_time_s`: Endpoint times of the ramp.
 - `RampSequence.at`: Interpolate AOD center and depth at a requested time.
+- `RampSequence.center_at` / `depth_at`: Per-axis position / depth lookup.
+- `RampSequence.velocity_at`: First derivative of the center position with respect to time.
+- `RampSequence.depth_rate_at`: First derivative of depth with respect to time.
+- `named_profile`: Look up a built-in connector by string name.
+- `build_waypoint_ramp`: Convenience constructor with explicit profile keyword arguments.
 
 ## `sampling.py`
 
 - `sample_thermal_velocities`: Sample Maxwell-Boltzmann velocities for a 3D atom ensemble.
-- `sample_thermal_positions_harmonic`: Sample thermal positions from a local harmonic trap approximation.
-- `_default_center`: Choose the deepest trap center for initial position sampling.
-- `_trap_list`: Normalize one trap or an iterable of traps into a list.
+- `sample_thermal_positions_harmonic`: Sample thermal positions from a local harmonic trap approximation at a chosen time.
 
 ## `simulation.py`
 
 - `SimulationConfig.__post_init__`: Validate simulation parameters and normalize vector fields.
-- `run_simulation`: Run Monte Carlo velocity-Verlet propagation through the ramp.
-- `_append_trajectory_sample`: Store one trajectory snapshot of positions, velocities, and loss masks.
-- `_resample_initially_lost`: Resample atoms that are unbound at the initial time.
-- `_initial_lost_flags`: Mark atoms initially unbound or outside the loss boundary.
-- `_moving_trap_at`: Create the moving trap configuration at one ramp time.
-- `_mechanical_energy`: Compute kinetic plus trap potential energy.
-- `_kinetic_temperature_uK`: Estimate kinetic temperature from velocities.
-- `_outside_boundary`: Mark atoms outside the configured spherical loss boundary.
-- `_trap_list`: Normalize one trap or an iterable of traps into a list.
+- `SimulationResult.final_temperature_uK`: Property returning survivors-only final temperature (alias).
+- `SimulationResult.temperature_gain_uK`: Property returning survivors-only temperature gain (alias).
+- `SimulationResult.temperature_gain_uK_at`: Method returning temperature gain for survivors or the full ensemble.
+- `run_simulation`: Run velocity-Verlet propagation. Accepts either `(traps, config)` or the legacy `(static_trap, moving_trap_base, ramp, config)` form.
 
 ## `trap.py`
 
-- `TrapConfig.__post_init__`: Validate trap geometry and store the center as an array.
-- `TrapConfig.axial_scale_m`: Return the axial Gaussian scale used by the model.
-- `TrapConfig.depth_joule`: Convert trap depth from microkelvin to joules.
-- `TrapConfig.scales_m`: Return radial and axial Gaussian scales as a 3-vector.
-- `TrapConfig.with_center_depth`: Copy a trap with a new center and depth.
-- `TrapConfig.potential`: Evaluate the Gaussian trap potential.
-- `TrapConfig.force`: Evaluate the analytic Gaussian trap force.
-- `TrapConfig.hessian`: Evaluate the analytic potential Hessian at one point.
-- `total_potential`: Sum potentials from one or more traps.
-- `total_force`: Sum forces from one or more traps.
-- `total_hessian`: Sum potential Hessians from one or more traps.
-- `_trap_list`: Normalize one trap or an iterable of traps into a list.
-- `_as_positions`: Validate and convert position input arrays.
+- `TrapConfig`: Abstract base for any time-dependent trap potential `U(r, t)`.
+- `TrapConfig.center_at`: Required override returning the natural anchor point at time `t`.
+- `TrapConfig.potential`: Required override evaluating `U(r, t)` in joules.
+- `TrapConfig.force` / `hessian`: Default central-difference implementations; subclasses override.
+- `GaussianTrap`: Cylindrically symmetric, time-independent 3D Gaussian; was the original `TrapConfig`.
+- `GaussianTrap.with_center_depth`: Copy the trap with new center and depth.
+- `MovingGaussianTrap`: Cylindrical Gaussian with center and depth driven by a `RampSequence`.
+- `MovingGaussianTrap.snapshot`: Return the equivalent `GaussianTrap` at a chosen time.
+- `AstigmaticAODTrap`: Astigmatic Gaussian with velocity-coupled focal lensing (`z01 = dxdt2z * vx`, `z02 = dxdt2z * vy`).
+- `AstigmaticAODTrap.rayleigh_length_m`: Computed `pi * w0^2 / lambda`.
+- `total_potential` / `total_force` / `total_hessian`: Linear sum of trap evaluations at a chosen time.
 
 ## `units.py`
 
 - `microkelvin_to_joule`: Convert microkelvin energy units to joules.
-- `joule_to_microkelvin`: Convert joules to microkelvin energy units.
+- `joule_to_microkelvin`: Convert joules to the equivalent temperature-like scale in microkelvin.
 - `um`: Convert micrometers to meters.
 - `ms`: Convert milliseconds to seconds.
 
@@ -86,7 +84,6 @@ Compact one-line descriptions of functions and methods in the local `src` packag
 - `plot_transfer_trajectory_summary`: Plot 2D trajectories, mean position, and AOD ramps.
 - `plot_transfer_energy_summary`: Plot kinetic energy, loss, and motional occupation distributions.
 - `plot_transfer_trajectories_3d`: Plot atom trajectories and AOD path in 3D.
-- `_probability_axis_upper_limit`: Choose a readable y-limit for small probability traces.
-- `_plot_mode_occupation_distribution`: Plot normalized per-mode occupation histograms.
-- `_occupation_axis_upper_limit`: Choose a readable x-limit for occupation histograms.
-- `_set_equal_3d_limits`: Apply equal-scale 3D plot limits around trajectory data.
+- `draw_traps_2d`, `draw_atoms_2d`, `draw_tweezer_beams_3d`, `draw_tweezer_beam_side_2d`,
+  `draw_trap_ellipsoids_3d`, `draw_atoms_3d`, `draw_atom_trails_2d`, `draw_frame`,
+  `render_animation`: lower-level frame and animation helpers.

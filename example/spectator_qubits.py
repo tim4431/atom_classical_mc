@@ -32,7 +32,7 @@ from src.simulation import (  # noqa: E402
     SimulationResult,
     run_simulation,
 )
-from src.trap import TrapConfig  # noqa: E402
+from src.trap import GaussianTrap  # noqa: E402
 from src.units import ms, um  # noqa: E402
 
 HERE = os.path.dirname(__file__)
@@ -61,8 +61,8 @@ REPRESENTATIVE_DEPTH_UK = 200.0
 REPRESENTATIVE_DISTANCE_UM = 1.0
 
 
-def build_static_slm() -> TrapConfig:
-    return TrapConfig(
+def build_static_slm() -> GaussianTrap:
+    return GaussianTrap(
         center_m=um([0.0, 0.0, 0.0]),
         waist_radial_m=float(um(SLM_WAIST_RADIAL_UM)),
         waist_axial_m=float(um(SLM_WAIST_AXIAL_UM)),
@@ -71,8 +71,8 @@ def build_static_slm() -> TrapConfig:
     )
 
 
-def build_aod_base() -> TrapConfig:
-    return TrapConfig(
+def build_aod_base() -> GaussianTrap:
+    return GaussianTrap(
         center_m=um([0.0, 0.0, 0.0]),
         waist_radial_m=float(um(AOD_WAIST_RADIAL_UM)),
         waist_axial_m=float(um(AOD_WAIST_AXIAL_UM)),
@@ -128,7 +128,7 @@ def run_flyby(
     *,
     store_trajectories: bool = False,
     ensemble_size: int = ENSEMBLE_SIZE,
-) -> tuple[SimulationResult, RampSequence, TrapConfig, TrapConfig]:
+) -> tuple[SimulationResult, RampSequence, GaussianTrap, GaussianTrap]:
     slm = build_static_slm()
     aod_base = build_aod_base()
     ramp = build_flyby_ramp(depth_uK, transverse_distance_um)
@@ -140,7 +140,7 @@ def run_flyby(
 
 
 def drag_out_probability(
-    result: SimulationResult, slm: TrapConfig, mass_kg: float
+    result: SimulationResult, slm: GaussianTrap, mass_kg: float
 ) -> float:
     survivors = ~result.lost
     still_in_slm = survivors & bound_to_trap(
@@ -154,7 +154,7 @@ def drag_out_probability(
 
 def aod_capture_probability(
     result: SimulationResult,
-    aod_base: TrapConfig,
+    aod_base: GaussianTrap,
     ramp: RampSequence,
     duration_s: float,
     mass_kg: float,

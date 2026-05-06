@@ -20,16 +20,30 @@ The main workflow is:
 
 ## Physics Model
 
-- Each tweezer is a red-detuned attractive 3D Gaussian potential:
-  `U(r) = -U0 exp[-2 x^2 / wr^2 - 2 y^2 / wr^2 - 2 z^2 / wz^2]`.
-- `U0` is supplied as a trap depth in microkelvin and converted to joules with
-  Boltzmann's constant.
-- The radial waist and axial scale are specified in SI units; the axial scale
-  may be provided as a Rayleigh-length-like Gaussian scale for this v1 model.
-- The total potential is the sum of the static SLM trap and the moving AOD trap.
-- Forces are computed analytically from the potential gradient.
-- The AOD ramp linearly interpolates center position and trap depth between
-  user-provided time points.
+- `TrapConfig` is the abstract base for any potential `U(r, t)`. Concrete
+  trap classes implement `center_at(t)`, `potential(r, t)`, and (optionally)
+  analytic `force(r, t)` / `hessian(r0, t)`. Default implementations of
+  `force` and `hessian` use central finite differences.
+- `GaussianTrap`: cylindrically symmetric, time-independent
+  `U(r) = -U0 exp[-2 (x^2 + y^2) / wr^2 - 2 z^2 / wz^2]`. `U0` is supplied as
+  microkelvin and converted to joules with Boltzmann's constant. `wr` and
+  `wz` are independent length scales — there is no Rayleigh-length input.
+- `MovingGaussianTrap`: cylindrically symmetric Gaussian whose center and
+  depth follow a `RampSequence`.
+- `AstigmaticAODTrap`: astigmatic Gaussian with velocity-coupled focal
+  shift, modelling AOD lensing. The two axial focal points
+  `z01 = dxdt2z * vx`, `z02 = dxdt2z * vy` are driven by the ramp's
+  instantaneous trap velocity. `dxdt2z = f0 / V_sound` is the AOD acoustic
+  constant. The Rayleigh length is `pi * w0^2 / lambda`.
+- The total potential is the linear sum of all configured traps at the
+  current simulation time.
+- Forces use the most efficient available implementation per trap class
+  (analytic gradient for the Gaussian-derived classes).
+- `RampSequence` interpolates center and depth between waypoints. The shape
+  of each segment is set by a `PolynomialConnector` — built-ins include
+  `LINEAR`, `CUBIC_SMOOTHSTEP`, `QUINTIC_MIN_JERK`, plus the `arb_fifth_poly(beta)`
+  family from `aod_slm_movement_v2`. The connector exposes the analytic
+  derivative, so `RampSequence.velocity_at(t)` is well-defined.
 
 ## Initial Ensemble
 
@@ -47,22 +61,28 @@ The main workflow is:
 
 ## Public API
 
-- `TrapConfig`: dataclass for Gaussian trap geometry and trap depth.
-- `RampSequence`: dataclass for AOD ramp times, centers, and depths.
-- `SimulationConfig`: dataclass for temperature, timestep, duration, ensemble
-  size, random seed, atom mass, loss boundary, and trajectory storage options.
-- `run_simulation(static_trap, moving_trap_base, ramp, config)`: runs the
-  Monte Carlo propagation and returns a `SimulationResult`.
-- `SimulationResult`: dataclass containing survival probability, loss fraction,
-  final temperature, temperature gain, energy gain statistics, final states,
-  lost flags, and optional sampled position/velocity/loss trajectories.
-- `analysis.py`: helper functions for kinetic energy traces, survival traces,
-  and final capture probability in a specified trap.
-- `harmonic.py`: helper functions for approximating trap potentials as harmonic
-  normal modes and decomposing atom phase-space coordinates into motional
-  occupation estimates.
-- `visualization.py`: optional Matplotlib helper for a compact transfer summary
-  figure.
+- `TrapConfig` (ABC): time-aware trap potential interface.
+- `GaussianTrap`: cylindrically symmetric, time-independent Gaussian trap.
+- `MovingGaussianTrap`: cylindrical Gaussian driven by a ramp.
+- `AstigmaticAODTrap`: astigmatic Gaussian with velocity-coupled lensing.
+- `RampSequence`: time-indexed waypoint table with selectable
+  `position_profile` and `depth_profile` connectors.
+- `PolynomialConnector` plus `LINEAR`, `CUBIC_SMOOTHSTEP`, `QUINTIC_MIN_JERK`,
+  and `arb_fifth_poly(beta)` / `const_jerk()`.
+- `SimulationConfig`: temperature, timestep, duration, ensemble size, seed,
+  atom mass, loss boundary, and trajectory storage options.
+- `run_simulation(traps, config)`: runs the Monte Carlo propagation and
+  returns a `SimulationResult`. Also accepts the legacy
+  `(static_trap, moving_trap_base, ramp, config)` four-argument form.
+- `SimulationResult`: survival, loss, energy gain stats, final states, lost
+  flags, and (optional) sampled position/velocity/loss trajectories. Carries
+  separate survivors-only and full-ensemble temperature fields.
+- `analysis.py`: helpers for kinetic-energy traces, survival traces,
+  capture probability in a chosen trap, and SLM/AOD/ambiguous classification.
+- `harmonic.py`: harmonic Taylor expansion of any `TrapConfig` (or a generic
+  callable potential) and motional-mode decomposition.
+- `visualization.py`: optional Matplotlib helpers for trajectory, energy,
+  3D, frame, and animation figures.
 
 ## Loss and Heating Metrics
 

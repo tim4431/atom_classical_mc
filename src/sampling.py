@@ -8,7 +8,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .constants import RB87_MASS_KG
-from .trap import TrapConfig, total_hessian
+from .trap import GaussianTrap, TrapConfig, total_hessian
 from .units import microkelvin_to_joule
 
 
@@ -37,11 +37,13 @@ def sample_thermal_positions_harmonic(
     ensemble_size: int,
     rng: np.random.Generator,
     center_m: ArrayLike | None = None,
+    time_s: float = 0.0,
 ) -> NDArray[np.float64]:
-    """Sample positions from a local harmonic approximation to the trap.
+    """Sample positions from a local harmonic approximation to the traps at `time_s`.
 
     The covariance is `k_B T K^-1`, where `K` is the potential Hessian at
-    `center_m`. If no center is provided, the deepest trap center is used.
+    `center_m`. If no center is provided, the deepest trap center at `time_s`
+    is used.
     """
 
     trap_list = _trap_list(traps)
@@ -52,14 +54,18 @@ def sample_thermal_positions_harmonic(
     if ensemble_size <= 0:
         raise ValueError("ensemble_size must be positive.")
 
-    center = _default_center(trap_list) if center_m is None else np.asarray(center_m, dtype=float)
+    center = (
+        _default_center(trap_list, time_s)
+        if center_m is None
+        else np.asarray(center_m, dtype=float)
+    )
     if center.shape != (3,):
         raise ValueError("center_m must be a 3-vector in meters.")
 
     if temperature_uK == 0.0:
         return np.repeat(center[np.newaxis, :], ensemble_size, axis=0)
 
-    stiffness = total_hessian(trap_list, center)
+    stiffness = total_hessian(trap_list, center, time_s=time_s)
     stiffness = 0.5 * (stiffness + stiffness.T)
     eigenvalues, eigenvectors = np.linalg.eigh(stiffness)
     if np.any(eigenvalues <= 0.0):
@@ -73,14 +79,33 @@ def sample_thermal_positions_harmonic(
     return rng.multivariate_normal(mean=center, cov=covariance, size=ensemble_size)
 
 
-def _default_center(traps: list[TrapConfig]) -> NDArray[np.float64]:
-    deepest = max(traps, key=lambda trap: trap.depth_uK)
-    if deepest.depth_uK <= 0.0:
+def _default_center(
+    traps: list[TrapConfig], time_s: float = 0.0
+) -> NDArray[np.float64]:
+    """Pick the center of the deepest Gaussian-like trap at `time_s`.
+
+    For non-Gaussian traps (no `depth_uK` attribute) we fall back to the
+    trap's `center_at(time_s)`.
+    """
+
+    def depth(trap: TrapConfig) -> float:
+        if isinstance(trap, GaussianTrap):
+            return float(trap.depth_uK)
+        # MovingGaussianTrap exposes `template`; AstigmaticAODTrap exposes ramp.
+        ramp = getattr(trap, "ramp", None)
+        if ramp is not None:
+            return float(ramp.depth_at(time_s))
+        return 0.0
+
+    deepest = max(traps, key=depth)
+    if depth(deepest) <= 0.0:
         raise ValueError("At least one trap with positive depth is required.")
-    return np.asarray(deepest.center_m, dtype=float)
+    return np.asarray(deepest.center_at(time_s), dtype=float)
 
 
-def _trap_list(traps: TrapConfig | Iterable[TrapConfig]) -> list[TrapConfig]:
+def _trap_list(
+    traps: TrapConfig | Iterable[TrapConfig],
+) -> list[TrapConfig]:
     if isinstance(traps, TrapConfig):
         return [traps]
     return list(traps)

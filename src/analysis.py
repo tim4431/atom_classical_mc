@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 
 from .constants import RB87_MASS_KG
 from .simulation import SimulationResult
-from .trap import TrapConfig
+from .trap import MovingGaussianTrap, TrapConfig
 from .units import joule_to_microkelvin
 
 
@@ -45,11 +45,16 @@ def bound_to_trap(
     velocities_m_per_s: NDArray[np.float64],
     trap: TrapConfig,
     mass_kg: float = RB87_MASS_KG,
+    time_s: float = 0.0,
 ) -> NDArray[np.bool_]:
-    """Classify particles as bound to a single trap in the lab frame."""
+    """Classify particles as bound to a single trap in the lab frame.
+
+    For a time-dependent trap, `time_s` selects which snapshot of the trap
+    is used for the bound test.
+    """
 
     kinetic_j = 0.5 * mass_kg * np.sum(velocities_m_per_s * velocities_m_per_s, axis=-1)
-    single_trap_energy_j = kinetic_j + trap.potential(positions_m)
+    single_trap_energy_j = kinetic_j + trap.potential(positions_m, time_s=time_s)
     return single_trap_energy_j < 0.0
 
 
@@ -58,12 +63,13 @@ def single_trap_energy_uK(
     velocities_m_per_s: NDArray[np.float64],
     trap: TrapConfig,
     mass_kg: float = RB87_MASS_KG,
+    time_s: float = 0.0,
 ) -> NDArray[np.float64]:
     """Return mechanical energy against one trap only, in microkelvin units."""
 
     velocities = np.asarray(velocities_m_per_s, dtype=float)
     kinetic_j = 0.5 * mass_kg * np.sum(velocities * velocities, axis=-1)
-    return joule_to_microkelvin(kinetic_j + trap.potential(positions_m))
+    return joule_to_microkelvin(kinetic_j + trap.potential(positions_m, time_s=time_s))
 
 
 def capture_probability(
@@ -71,13 +77,17 @@ def capture_probability(
     trap: TrapConfig,
     mass_kg: float = RB87_MASS_KG,
     conditional_on_survival: bool = False,
+    time_s: float | None = None,
 ) -> float:
     """Return final probability that an atom survived and is bound to `trap`.
 
     With `conditional_on_survival=False`, the denominator is the original
     ensemble size. With `True`, the denominator is the final survivor count.
+    `time_s` defaults to the simulation's recorded duration so moving traps
+    are evaluated at the end of the ramp.
     """
 
+    target_time = result.duration_s if time_s is None else time_s
     survivors = ~result.lost
     captured = (
         survivors
@@ -86,6 +96,7 @@ def capture_probability(
             result.final_velocities_m_per_s,
             trap,
             mass_kg=mass_kg,
+            time_s=target_time,
         )
     )
     if conditional_on_survival:
@@ -101,26 +112,30 @@ def classify_final_trap_occupation(
     slm_trap: TrapConfig,
     aod_trap: TrapConfig,
     mass_kg: float = RB87_MASS_KG,
+    time_s: float | None = None,
 ) -> TrapOccupation:
     """Classify final atoms as SLM-bound, AOD-bound, ambiguous, or unbound.
 
-    A particle is bound to a trap when its lab-frame mechanical energy in that
-    single-trap potential is negative. Particles bound to both final traps are
-    reported as ambiguous instead of being forced into one trap.
+    Particles bound to both final traps are reported as ambiguous instead of
+    being forced into one trap. `time_s` defaults to the simulation's
+    recorded duration.
     """
 
+    target_time = result.duration_s if time_s is None else time_s
     survivors = ~result.lost
     slm_bound = survivors & bound_to_trap(
         result.final_positions_m,
         result.final_velocities_m_per_s,
         slm_trap,
         mass_kg=mass_kg,
+        time_s=target_time,
     )
     aod_bound = survivors & bound_to_trap(
         result.final_positions_m,
         result.final_velocities_m_per_s,
         aod_trap,
         mass_kg=mass_kg,
+        time_s=target_time,
     )
 
     ambiguous = slm_bound & aod_bound
@@ -178,3 +193,13 @@ def mean_kinetic_energy_time_series_uK(
         if np.any(survivor_mask):
             means[index] = float(np.mean(kinetic[index, survivor_mask]))
     return means
+
+
+def snapshot_moving_trap(
+    trap: TrapConfig, time_s: float
+) -> TrapConfig:
+    """Return a static `GaussianTrap` snapshot of a moving trap, or the trap itself."""
+
+    if isinstance(trap, MovingGaussianTrap):
+        return trap.snapshot(time_s)
+    return trap

@@ -13,19 +13,49 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
 from src.analysis import capture_probability  # noqa: E402
-from src.ramp import RampSequence  # noqa: E402
+from src.ramp import (  # noqa: E402
+    CUBIC_SMOOTHSTEP,
+    LINEAR,
+    QUINTIC_MIN_JERK,
+    PolynomialConnector,
+    RampSequence,
+)
 from src.simulation import SimulationConfig, SimulationResult, run_simulation  # noqa: E402
-from src.trap import TrapConfig  # noqa: E402
+from src.trap import GaussianTrap  # noqa: E402
 from src.units import ms, um  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 
-POSITION_RAMP_PROFILES = (
-    "linear",
-    "cubic_smoothstep",
-    "quintic_minimum_jerk",
-    "sinusoidal",
-)
+
+def _sinusoidal_profile() -> PolynomialConnector:
+    """Quintic match of `0.5 - 0.5 cos(pi u)` on `[0, 1]`.
+
+    Coefficients are uniquely determined by `f(0)=0`, `f(1)=1`, `f'(0)=f'(1)=0`,
+    `f''(0)=pi^2/2`, `f''(1)=-pi^2/2` (the cosine ramp's endpoint curvatures).
+    """
+
+    pi2 = np.pi**2
+    return PolynomialConnector(
+        (
+            0.0,
+            0.0,
+            pi2 / 4.0,
+            10.0 - pi2,
+            1.25 * pi2 - 15.0,
+            6.0 - 0.5 * pi2,
+        ),
+        name="sinusoidal_quintic",
+    )
+
+
+PROFILE_BY_NAME: dict[str, PolynomialConnector] = {
+    "linear": LINEAR,
+    "cubic_smoothstep": CUBIC_SMOOTHSTEP,
+    "quintic_minimum_jerk": QUINTIC_MIN_JERK,
+    "sinusoidal": _sinusoidal_profile(),
+}
+
+POSITION_RAMP_PROFILES = tuple(PROFILE_BY_NAME)
 POSITION_SAMPLES = 81
 AOD_DEPTH_UK = 120.0
 ENSEMBLE_SIZE = 1500
@@ -38,8 +68,8 @@ SHOW_PLOT = False
 class TransferProblem:
     """Traps, ramp, and numerical settings for one comparison case."""
 
-    static_trap: TrapConfig
-    moving_trap_base: TrapConfig
+    static_trap: GaussianTrap
+    moving_trap_base: GaussianTrap
     ramp: RampSequence
     config: SimulationConfig
 
@@ -54,29 +84,14 @@ class PositionRampCase:
     aod_capture_probability: float
 
 
-def position_profile_fraction(profile_name: str, fraction: np.ndarray) -> np.ndarray:
-    """Map a normalized time coordinate to normalized position."""
-
-    u = np.clip(np.asarray(fraction, dtype=float), 0.0, 1.0)
-    if profile_name == "linear":
-        shaped = u
-    elif profile_name == "cubic_smoothstep":
-        shaped = u * u * (3.0 - 2.0 * u)
-    elif profile_name == "quintic_minimum_jerk":
-        shaped = u**3 * (10.0 - 15.0 * u + 6.0 * u * u)
-    elif profile_name == "sinusoidal":
-        shaped = 0.5 - 0.5 * np.cos(np.pi * u)
-    else:
+def _connector_for(profile_name: str) -> PolynomialConnector:
+    try:
+        return PROFILE_BY_NAME[profile_name]
+    except KeyError as exc:
         raise ValueError(
             f"Unknown position ramp profile {profile_name!r}. "
             f"Choose from: {', '.join(POSITION_RAMP_PROFILES)}."
-        )
-
-    if shaped.ndim > 0:
-        shaped = shaped.copy()
-        shaped[u <= 0.0] = 0.0
-        shaped[u >= 1.0] = 1.0
-    return shaped
+        ) from exc
 
 
 def build_position_ramp_sequence(
@@ -89,22 +104,34 @@ def build_position_ramp_sequence(
     move_end_ms: float,
     hold_end_ms: float,
 ) -> RampSequence:
-    """Build a load-move-hold AOD ramp using a named position profile."""
+    """Build a load-move-hold AOD ramp using a named position profile.
+
+    The ramp uses three waypoints (start, move-end, hold-end) plus the AOD
+    load step at `t=0`. The chosen profile drives the position connector;
+    `samples` is kept only as a knob for compatibility with previous calls
+    but no longer densely samples the trajectory — smooth motion is supplied
+    by the `PolynomialConnector` itself.
+    """
 
     if samples < 2:
         raise ValueError("samples must be at least 2.")
-    u = np.linspace(0.0, 1.0, samples)
-    shaped_u = position_profile_fraction(profile_name, u)
-    move_centers_um = start_um + shaped_u[:, np.newaxis] * (stop_um - start_um)
-    times_ms = np.concatenate(
-        [[0.0], np.linspace(load_end_ms, move_end_ms, samples), [hold_end_ms]]
+    times_s = np.array(
+        [0.0, ms(load_end_ms), ms(move_end_ms), ms(hold_end_ms)], dtype=float
     )
-    centers_um = np.vstack([start_um, move_centers_um, stop_um])
-    depths_uK = np.concatenate([[0.0], np.full(samples, depth_uK), [depth_uK]])
+    centers_m = np.vstack(
+        [
+            um(start_um),
+            um(start_um),
+            um(stop_um),
+            um(stop_um),
+        ]
+    )
+    depths_uK_array = np.array([0.0, depth_uK, depth_uK, depth_uK], dtype=float)
     return RampSequence(
-        times_s=ms(times_ms),
-        centers_m=um(centers_um),
-        depths_uK=depths_uK,
+        times_s=times_s,
+        centers_m=centers_m,
+        depths_uK=depths_uK_array,
+        position_profile=_connector_for(profile_name),
     )
 
 
@@ -118,14 +145,14 @@ def build_transfer_problem(
 ) -> TransferProblem:
     """Create the shared SLM-to-AOD transfer problem for one ramp profile."""
 
-    slm_trap = TrapConfig(
+    slm_trap = GaussianTrap(
         center_m=um([0.0, 0.0, 0.0]),
         waist_radial_m=float(um(1.2)),
         waist_axial_m=float(um(6.0)),
         depth_uK=70.0,
         name="static SLM",
     )
-    aod_trap_base = TrapConfig(
+    aod_trap_base = GaussianTrap(
         center_m=um([0.0, 0.0, 0.0]),
         waist_radial_m=float(um(1.0)),
         waist_axial_m=float(um(5.0)),
@@ -246,9 +273,13 @@ def plot_position_ramp_comparison(cases: Sequence[PositionRampCase]):
     ax = axes[0]
     for case in cases:
         ramp = case.problem.ramp
+        dense_t = np.linspace(ramp.start_time_s, ramp.end_time_s, 401)
+        dense_x_um = np.array(
+            [ramp.center_at(t)[0] for t in dense_t], dtype=float
+        ) * 1.0e6
         ax.plot(
-            ramp.times_s * 1.0e3,
-            ramp.centers_m[:, 0] * 1.0e6,
+            dense_t * 1.0e3,
+            dense_x_um,
             linewidth=1.8,
             label=case.profile_name,
         )

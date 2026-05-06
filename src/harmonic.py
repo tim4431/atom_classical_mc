@@ -95,6 +95,7 @@ def approximate_harmonic_potential(
     mass_kg: float = RB87_MASS_KG,
     mode_labels: Sequence[str] | None = None,
     require_positive_definite: bool = True,
+    time_s: float = 0.0,
 ) -> HarmonicApproximation:
     """Approximate one or more traps by a harmonic potential near `center_m`.
 
@@ -102,7 +103,8 @@ def approximate_harmonic_potential(
     `U(r) ~= U(c) + grad U(c).(r-c) + 1/2 (r-c)^T K (r-c)`.
     Motional-state decomposition is physically meaningful when `center_m` is a
     stable equilibrium, so `grad U(c)` should be close to zero and `K` should be
-    positive definite.
+    positive definite. For time-dependent traps, `time_s` selects the snapshot
+    used for the expansion.
     """
 
     center = np.asarray(center_m, dtype=float)
@@ -111,12 +113,14 @@ def approximate_harmonic_potential(
     if mass_kg <= 0.0:
         raise ValueError("mass_kg must be positive.")
 
-    hessian = total_hessian(traps, center)
+    hessian = total_hessian(traps, center, time_s=time_s)
     hessian = 0.5 * (hessian + hessian.T)
     return _build_harmonic_approximation(
         center_m=center,
-        potential_offset_joule=float(total_potential(traps, center)),
-        gradient_j_per_m=-np.asarray(total_force(traps, center), dtype=float),
+        potential_offset_joule=float(total_potential(traps, center, time_s=time_s)),
+        gradient_j_per_m=-np.asarray(
+            total_force(traps, center, time_s=time_s), dtype=float
+        ),
         hessian_j_per_m2=hessian,
         mass_kg=mass_kg,
         mode_labels=mode_labels,
