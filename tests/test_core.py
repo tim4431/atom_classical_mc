@@ -27,7 +27,7 @@ from src.harmonic import (  # noqa: E402
     summarize_mode_occupations,
 )
 from src.ramp import (  # noqa: E402
-    CUBIC_SMOOTHSTEP,
+    CONST_JERK,
     LINEAR,
     QUINTIC_MIN_JERK,
     RampSequence,

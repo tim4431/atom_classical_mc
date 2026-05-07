@@ -45,7 +45,7 @@ from src.constants import (  # noqa: E402
     BOLTZMANN_CONSTANT_J_PER_K,
 )
 from src.ramp import (  # noqa: E402
-    CUBIC_SMOOTHSTEP,
+    CONST_JERK,
     LINEAR,
     PolynomialConnector,
     RampSequence,
@@ -104,8 +104,8 @@ def profile_cases() -> list[ProfileCase]:
     cases.append(
         ProfileCase(
             "cubic_smoothstep",
-            CUBIC_SMOOTHSTEP,
-            peak_normalized_velocity(CUBIC_SMOOTHSTEP),
+            CONST_JERK,
+            peak_normalized_velocity(CONST_JERK),
         )
     )
     for beta in [1.00, 1.25, 1.5625, 1.75, 1.875, 2.00]:
@@ -535,9 +535,7 @@ def render_comparison_gif(
     right_ax.tick_params(labelsize=8)
     right_ax.grid(True, linestyle=":", alpha=0.4)
     right_ax.legend(loc="lower right", fontsize=8, framealpha=0.92)
-    scrubber = right_ax.axvline(
-        0.0, color="red", linewidth=1.6, alpha=0.85, zorder=5
-    )
+    scrubber = right_ax.axvline(0.0, color="red", linewidth=1.6, alpha=0.85, zorder=5)
 
     time_text = fig.suptitle(
         f"AOD round-trip   T_drag = {T_DRAG_S * 1e6:.0f} us   "

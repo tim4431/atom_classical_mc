@@ -29,14 +29,16 @@ class PolynomialConnector:
     Given waypoints `(x0, y0)` and `(x1, y1)`, the connector evaluates
     `y(x) = y0 + (y1 - y0) * sum_n a_n u^n` with `u = (x - x0) / (x1 - x0)`.
     The polynomial coefficients should satisfy `a_0 = 0`, `sum a_n = 1` so the
-    connector matches both endpoint values; smoothness at the joins comes from
-    extra zero leading coefficients.
+    connector matches both endpoint values;
+    smoothness at the joins comes from extra zero leading coefficients.
     """
 
     coefficients: Tuple[float, ...]
     name: str = "polynomial"
 
     def __post_init__(self) -> None:
+        """Validate that at least one polynomial coefficient was provided."""
+
         if len(self.coefficients) < 1:
             raise ValueError("coefficients must have at least one entry.")
 
@@ -64,7 +66,7 @@ class PolynomialConnector:
 
 
 LINEAR = PolynomialConnector((0.0, 1.0), name="linear")
-CUBIC_SMOOTHSTEP = PolynomialConnector((0.0, 0.0, 3.0, -2.0), name="cubic_smoothstep")
+CONST_JERK = PolynomialConnector((0.0, 0.0, 3.0, -2.0), name="const_jerk")
 QUINTIC_MIN_JERK = PolynomialConnector(
     (0.0, 0.0, 0.0, 10.0, -15.0, 6.0), name="quintic_minimum_jerk"
 )
@@ -99,13 +101,30 @@ def const_jerk() -> PolynomialConnector:
 class RampSequence:
     """Time-indexed center-and-depth waypoint table for one trap.
 
-    `times_s` must be strictly increasing. Centers are 3-vectors per waypoint;
-    depths are scalars in microkelvin. Outside `[times_s[0], times_s[-1]]`,
-    `at(t)` clamps to the endpoint values and `velocity_at(t)` returns zero.
+    The table separates **what** values to hit (`centers_m`, `depths_uK` at
+    each entry of `times_s`) from **how** to interpolate between them
+    (`position_profile`, `depth_profile`). The two are orthogonal: the
+    waypoint arrays carry the absolute target values; the profiles are
+    normalized shape functions on `u ∈ [0, 1]` that the same kernel applies
+    to every segment. You need both — the profile alone has no notion of
+    absolute depth, and two waypoints alone don't say whether the transition
+    is linear or smooth.
 
-    `position_profile` and `depth_profile` choose the per-segment
-    interpolation kernel. Both default to LINEAR so a plain waypoint list
-    behaves like `np.interp`.
+    Fields:
+        times_s: 1D, strictly increasing waypoint times. At least two points.
+        centers_m: shape `(N, 3)` — trap-center position at each waypoint.
+        depths_uK: shape `(N,)` — non-negative trap depth at each waypoint.
+        position_profile: per-segment kernel for `centers_m` interpolation.
+        depth_profile: per-segment kernel for `depths_uK` interpolation.
+
+    Both profiles default to `LINEAR`, so a plain waypoint list behaves like
+    `np.interp`. Switch to `QUINTIC_MIN_JERK` (or another connector) for
+    smooth motion — note that `AstigmaticAODTrap` reads `velocity_at(t)` from
+    the position profile, so a `LINEAR` position profile gives piecewise-
+    constant velocity and step changes in the focal shift at every waypoint.
+
+    Outside `[times_s[0], times_s[-1]]`, `at(t)` clamps to the endpoint
+    values and `velocity_at(t)` / `depth_rate_at(t)` return zero.
     """
 
     times_s: ArrayLike
@@ -115,6 +134,15 @@ class RampSequence:
     depth_profile: PolynomialConnector = field(default=LINEAR)
 
     def __post_init__(self) -> None:
+        """Coerce inputs to float arrays and check shape/monotonicity invariants.
+
+        Raises `ValueError` if `times_s` is not strictly increasing, if
+        `centers_m` / `depths_uK` don't match its length, or if any depth is
+        negative. After validation, the original fields are replaced with
+        canonical `np.float64` arrays so downstream code can index without
+        re-coercing.
+        """
+
         times = np.asarray(self.times_s, dtype=float)
         centers = np.asarray(self.centers_m, dtype=float)
         depths = np.asarray(self.depths_uK, dtype=float)
@@ -136,10 +164,14 @@ class RampSequence:
 
     @property
     def start_time_s(self) -> float:
+        """Time of the first waypoint (lower bound of the ramp's active range)."""
+
         return float(self.times_s[0])
 
     @property
     def end_time_s(self) -> float:
+        """Time of the last waypoint (upper bound of the ramp's active range)."""
+
         return float(self.times_s[-1])
 
     def at(self, time_s: float) -> tuple[NDArray[np.float64], float]:
@@ -148,6 +180,14 @@ class RampSequence:
         return self.center_at(time_s), self.depth_at(time_s)
 
     def center_at(self, time_s: float) -> NDArray[np.float64]:
+        """Interpolated trap-center 3-vector (meters) at `time_s`.
+
+        Inside the table, the bracketing waypoints `c0`, `c1` are blended by
+        `position_profile.value(u)` where `u` is the segment fraction.
+        Outside `[start_time_s, end_time_s]`, returns the nearest endpoint
+        center.
+        """
+
         index, u = self._segment_index_and_fraction(time_s)
         if index is None:
             return self._endpoint_center(time_s)
@@ -157,6 +197,13 @@ class RampSequence:
         return c0 + shape * (c1 - c0)
 
     def depth_at(self, time_s: float) -> float:
+        """Interpolated trap depth (microkelvin) at `time_s`.
+
+        Inside the table, blends the bracketing depths via
+        `depth_profile.value(u)`. Outside the table, returns the nearest
+        endpoint depth.
+        """
+
         index, u = self._segment_index_and_fraction(time_s)
         if index is None:
             return self._endpoint_depth(time_s)
@@ -190,18 +237,37 @@ class RampSequence:
         return slope * (d1 - d0)
 
     def _endpoint_center(self, time_s: float) -> NDArray[np.float64]:
+        """Clamped center for times outside the waypoint range.
+
+        Returns the first waypoint's center for `time_s <= start_time_s`,
+        otherwise the last waypoint's center. Always returns a fresh array.
+        """
+
         if time_s <= self.start_time_s:
             return np.array(self.centers_m[0], dtype=float)
         return np.array(self.centers_m[-1], dtype=float)
 
     def _endpoint_depth(self, time_s: float) -> float:
+        """Clamped depth for times outside the waypoint range.
+
+        Returns the first waypoint's depth for `time_s <= start_time_s`,
+        otherwise the last waypoint's depth.
+        """
+
         if time_s <= self.start_time_s:
             return float(self.depths_uK[0])
         return float(self.depths_uK[-1])
 
-    def _segment_index_and_fraction(
-        self, time_s: float
-    ) -> tuple[int | None, float]:
+    def _segment_index_and_fraction(self, time_s: float) -> tuple[int | None, float]:
+        """Locate the segment containing `time_s` and its normalized fraction.
+
+        Returns `(index, u)` where `index` is the lower waypoint of the
+        bracketing segment and `u = (t - times_s[index]) / (times_s[index+1]
+        - times_s[index]) ∈ [0, 1]`. Returns `(None, 0.0)` when `time_s` is
+        outside `[start_time_s, end_time_s]`, signalling the caller to use
+        the endpoint-clamp helpers instead of interpolating.
+        """
+
         t = float(time_s)
         if t <= self.start_time_s or t >= self.end_time_s:
             return None, 0.0
@@ -211,40 +277,3 @@ class RampSequence:
         t1 = float(self.times_s[index + 1])
         u = (t - t0) / (t1 - t0)
         return index, u
-
-
-PROFILES: dict[str, PolynomialConnector] = {
-    "linear": LINEAR,
-    "cubic_smoothstep": CUBIC_SMOOTHSTEP,
-    "quintic_minimum_jerk": QUINTIC_MIN_JERK,
-}
-
-
-def named_profile(name: str) -> PolynomialConnector:
-    """Look up a built-in profile by name."""
-
-    try:
-        return PROFILES[name]
-    except KeyError as exc:
-        raise ValueError(
-            f"Unknown profile {name!r}. Choose from {list(PROFILES)} "
-            "or build one with `arb_fifth_poly(beta)`."
-        ) from exc
-
-
-def build_waypoint_ramp(
-    times_s: Sequence[float],
-    centers_m: Sequence[Sequence[float]],
-    depths_uK: Sequence[float],
-    position_profile: PolynomialConnector = LINEAR,
-    depth_profile: PolynomialConnector = LINEAR,
-) -> RampSequence:
-    """Convenience constructor — keyword-only smoothness selection."""
-
-    return RampSequence(
-        times_s=np.asarray(times_s, dtype=float),
-        centers_m=np.asarray(centers_m, dtype=float),
-        depths_uK=np.asarray(depths_uK, dtype=float),
-        position_profile=position_profile,
-        depth_profile=depth_profile,
-    )

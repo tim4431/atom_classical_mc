@@ -41,8 +41,7 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `RampSequence.center_at` / `depth_at`: Per-axis position / depth lookup.
 - `RampSequence.velocity_at`: First derivative of the center position with respect to time.
 - `RampSequence.depth_rate_at`: First derivative of depth with respect to time.
-- `named_profile`: Look up a built-in connector by string name.
-- `build_waypoint_ramp`: Convenience constructor with explicit profile keyword arguments.
+
 
 ## `sampling.py`
 
