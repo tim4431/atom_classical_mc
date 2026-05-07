@@ -7,6 +7,10 @@ time-dependent optical tweezer transfer.
 
 ![transfer animation](demo/slm_to_aod_transfer.gif)
 
+Different trajectories comparison:
+
+![alt text](demo/position_ramp_compare.gif)
+
 The core library lives directly in `src/`. See `doc/plan.md` for the model
 assumptions and public API.
 
