@@ -55,6 +55,8 @@ from src.simulation import SimulationConfig, run_simulation  # noqa: E402
 from src.trap import AstigmaticAODTrap  # noqa: E402
 
 HERE = os.path.dirname(__file__)
+RENDER_DIR = os.path.join(HERE, "render")
+os.makedirs(RENDER_DIR, exist_ok=True)
 PLANCK_CONST_J_S = 6.626070e-34
 
 
@@ -591,7 +593,7 @@ def main() -> None:
     print_table(rows)
 
     figure, _ = plot_comparison(rows)
-    out_path = os.path.join(HERE, "position_ramp_compare.png")
+    out_path = os.path.join(RENDER_DIR, "position_ramp_compare.png")
     figure.savefig(out_path, dpi=180)
     print(f"\nsaved: {out_path}")
 

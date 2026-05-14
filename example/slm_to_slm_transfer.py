@@ -43,6 +43,8 @@ from src.visualization import (  # noqa: E402
 )
 
 HERE = os.path.dirname(__file__)
+RENDER_DIR = os.path.join(HERE, "render")
+os.makedirs(RENDER_DIR, exist_ok=True)
 
 WAIST_RADIAL_UM = 1.2
 WAIST_AXIAL_UM = 6.0
@@ -261,10 +263,10 @@ def main() -> None:
     figure_3d, _ = plot_transfer_trajectories_3d(result, ramp, static_trap)
     occupation_figure, _ = plot_mode_occupation_comparison(analysis)
 
-    trajectory_path = os.path.join(HERE, "slm_to_slm_transfer_traj.png")
-    energy_path = os.path.join(HERE, "slm_to_slm_transfer_energy.png")
-    path_3d = os.path.join(HERE, "slm_to_slm_transfer_3d.png")
-    occupation_path = os.path.join(HERE, "slm_to_slm_transfer_occupation.png")
+    trajectory_path = os.path.join(RENDER_DIR, "slm_to_slm_transfer_traj.png")
+    energy_path = os.path.join(RENDER_DIR, "slm_to_slm_transfer_energy.png")
+    path_3d = os.path.join(RENDER_DIR, "slm_to_slm_transfer_3d.png")
+    occupation_path = os.path.join(RENDER_DIR, "slm_to_slm_transfer_occupation.png")
     trajectory_figure.savefig(trajectory_path, dpi=180)
     energy_figure.savefig(energy_path, dpi=180)
     figure_3d.savefig(path_3d, dpi=180)

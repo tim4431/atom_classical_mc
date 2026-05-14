@@ -26,6 +26,8 @@ from src.visualization import draw_frame, render_animation  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
 HERE = os.path.dirname(__file__)
+RENDER_DIR = os.path.join(HERE, "render")
+os.makedirs(RENDER_DIR, exist_ok=True)
 
 
 def main() -> None:
@@ -41,12 +43,12 @@ def main() -> None:
         still_t, result, slm_trap, aod_trap_base, ramp,
         view="split", grid_n=220,
     )
-    still_path = os.path.join(HERE, f"transfer_frame_{still_t * 1e3:.2f}ms.png")
+    still_path = os.path.join(RENDER_DIR, f"transfer_frame_{still_t * 1e3:.2f}ms.png")
     figure.savefig(still_path, dpi=120, facecolor="white")
     plt.close(figure)
     print(f"saved still: {still_path}")
 
-    gif_path = os.path.join(HERE, "transfer.gif")
+    gif_path = os.path.join(RENDER_DIR, "transfer.gif")
     render_animation(
         result, slm_trap, aod_trap_base, ramp, gif_path,
         view="split", n_frames=80, fps=18, dpi=85, grid_n=160,

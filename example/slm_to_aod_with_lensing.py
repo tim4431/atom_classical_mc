@@ -34,6 +34,8 @@ from src.simulation import SimulationConfig, run_simulation  # noqa: E402
 from src.trap import AstigmaticAODTrap  # noqa: E402
 
 HERE = os.path.dirname(__file__)
+RENDER_DIR = os.path.join(HERE, "render")
+os.makedirs(RENDER_DIR, exist_ok=True)
 
 # v2 used Yb-171 trap parameters; keep that mass so the dynamics match.
 ATOM_MASS_KG = 171.0 * ATOMIC_MASS_UNIT_KG
@@ -282,7 +284,7 @@ def main() -> None:
     with_lens = run_one("with lensing", DXDT2Z)
 
     figure, _ = plot_comparison(no_lens, with_lens)
-    out_path = os.path.join(HERE, "slm_to_aod_with_lensing.png")
+    out_path = os.path.join(RENDER_DIR, "slm_to_aod_with_lensing.png")
     figure.savefig(out_path, dpi=180)
     print(f"saved: {out_path}")
 

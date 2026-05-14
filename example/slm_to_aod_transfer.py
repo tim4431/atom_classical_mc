@@ -40,6 +40,8 @@ from src.visualization import (  # noqa: E402
 )
 
 HERE = os.path.dirname(__file__)
+RENDER_DIR = os.path.join(HERE, "render")
+os.makedirs(RENDER_DIR, exist_ok=True)
 
 
 def build_transfer_problem() -> (
@@ -206,9 +208,9 @@ def main() -> None:
     )
     figure_3d, _ = plot_transfer_trajectories_3d(result, ramp, slm_trap)
 
-    trajectory_path = os.path.join(HERE, "slm_to_aod_transfer_traj.png")
-    energy_path = os.path.join(HERE, "slm_to_aod_transfer_energy.png")
-    path_3d = os.path.join(HERE, "slm_to_aod_transfer_3d.png")
+    trajectory_path = os.path.join(RENDER_DIR, "slm_to_aod_transfer_traj.png")
+    energy_path = os.path.join(RENDER_DIR, "slm_to_aod_transfer_energy.png")
+    path_3d = os.path.join(RENDER_DIR, "slm_to_aod_transfer_3d.png")
     trajectory_figure.savefig(trajectory_path, dpi=180)
     energy_figure.savefig(energy_path, dpi=180)
     figure_3d.savefig(path_3d, dpi=180)

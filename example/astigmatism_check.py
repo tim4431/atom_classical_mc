@@ -11,7 +11,7 @@ Run from the repository root:
 
     python3 example/astigmatism_check.py
 
-Saves `astigmatism_check.png` next to this script.
+Saves `astigmatism_check.png` into the `render/` subdir next to this script.
 """
 
 from __future__ import annotations
@@ -29,6 +29,8 @@ from src.trap import AstigmaticAODTrap  # noqa: E402
 from src.units import joule_to_microkelvin  # noqa: E402
 
 HERE = os.path.dirname(__file__)
+RENDER_DIR = os.path.join(HERE, "render")
+os.makedirs(RENDER_DIR, exist_ok=True)
 
 WAIST_RADIAL_M = 500.0e-9
 WAVELENGTH_M = 486.0e-9
@@ -148,7 +150,7 @@ def main() -> None:
     print(f"  max absolute error N = {fd_summary['max_absolute_error_n']:.3e}")
 
     figure, _ = plot_summary(zR, z_list, curves, fd_summary)
-    out_path = os.path.join(HERE, "astigmatism_check.png")
+    out_path = os.path.join(RENDER_DIR, "astigmatism_check.png")
     figure.savefig(out_path, dpi=180)
     print(f"saved: {out_path}")
 

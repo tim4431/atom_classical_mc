@@ -36,6 +36,8 @@ from src.simulation import SimulationConfig, run_simulation  # noqa: E402
 from src.trap import AstigmaticAODTrap  # noqa: E402
 
 HERE = os.path.dirname(__file__)
+RENDER_DIR = os.path.join(HERE, "render")
+os.makedirs(RENDER_DIR, exist_ok=True)
 
 # v2 used Yb-171 trap parameters; keep that mass.
 ATOM_MASS_KG = 171.0 * ATOMIC_MASS_UNIT_KG
@@ -210,7 +212,7 @@ def main() -> None:
     with_lens_rows = sweep(dxdt2z=DXDT2Z)
 
     figure, _ = plot_survival(no_lens_rows, with_lens_rows)
-    out_path = os.path.join(HERE, "aod_round_trip_survival.png")
+    out_path = os.path.join(RENDER_DIR, "aod_round_trip_survival.png")
     figure.savefig(out_path, dpi=180)
     print(f"saved: {out_path}")
 

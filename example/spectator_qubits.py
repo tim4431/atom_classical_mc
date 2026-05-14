@@ -36,6 +36,8 @@ from src.trap import GaussianTrap  # noqa: E402
 from src.units import ms, um  # noqa: E402
 
 HERE = os.path.dirname(__file__)
+RENDER_DIR = os.path.join(HERE, "render")
+os.makedirs(RENDER_DIR, exist_ok=True)
 
 SLM_WAIST_RADIAL_UM = 1.2
 SLM_WAIST_AXIAL_UM = 6.0
@@ -212,45 +214,40 @@ def plot_sweep_heatmaps(sweep_results: dict):
 
     distances = sweep_results["distances_um"]
     depths = sweep_results["depths_uK"]
-    panels = [
-        ("drag_out", "P(spectator dragged out of SLM)", 0.0, 1.0, "viridis"),
-        ("aod_capture", "P(captured by fly-by AOD)", 0.0, 1.0, "magma"),
-        ("loss", "P(lost)", 0.0, 1.0, "inferno"),
-    ]
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), constrained_layout=True)
-    for ax, (key, title, vmin, vmax, cmap) in zip(axes, panels):
-        grid = sweep_results[key]
-        im = ax.imshow(
-            grid,
-            origin="lower",
-            aspect="auto",
-            cmap=cmap,
-            vmin=vmin,
-            vmax=vmax,
-        )
-        ax.set_xticks(np.arange(len(distances)))
-        ax.set_xticklabels([f"{d:.2f}" for d in distances])
-        ax.set_yticks(np.arange(len(depths)))
-        ax.set_yticklabels([f"{int(d)}" for d in depths])
-        ax.set_xlabel("transverse distance d  [um]")
-        ax.set_ylabel("AOD depth  [uK]")
-        ax.set_title(title)
-        for i in range(grid.shape[0]):
-            for j in range(grid.shape[1]):
-                value = grid[i, j]
-                color = "white" if value < 0.55 else "black"
-                ax.text(
-                    j, i, f"{value:.2f}",
-                    ha="center", va="center", fontsize=8, color=color,
-                )
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    grid = sweep_results["drag_out"]
+
+    fig, ax = plt.subplots(1, 1, figsize=(6, 4.5), constrained_layout=True)
+    im = ax.imshow(
+        grid,
+        origin="lower",
+        aspect="auto",
+        cmap="viridis",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    ax.set_xticks(np.arange(len(distances)))
+    ax.set_xticklabels([f"{d:.2f}" for d in distances])
+    ax.set_yticks(np.arange(len(depths)))
+    ax.set_yticklabels([f"{int(d)}" for d in depths])
+    ax.set_xlabel("transverse distance d  [um]")
+    ax.set_ylabel("AOD depth  [uK]")
+    ax.set_title("P(spectator dragged out of SLM)")
+    for i in range(grid.shape[0]):
+        for j in range(grid.shape[1]):
+            value = grid[i, j]
+            color = "white" if value < 0.55 else "black"
+            ax.text(
+                j, i, f"{value:.2f}",
+                ha="center", va="center", fontsize=8, color=color,
+            )
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig.suptitle(
         f"Fly-by spectator drag-out: SLM={SLM_DEPTH_UK:.0f} uK, "
         f"T={INITIAL_TEMPERATURE_UK:.1f} uK, "
         f"AOD speed = "
         f"{2*FLYBY_HALF_LENGTH_UM/(DURATION_S*1.0e3):.1f} um/ms"
     )
-    return fig, axes
+    return fig, ax
 
 
 def plot_sweep_lines(sweep_results: dict):
@@ -259,35 +256,22 @@ def plot_sweep_lines(sweep_results: dict):
     distances = sweep_results["distances_um"]
     depths = sweep_results["depths_uK"]
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), constrained_layout=True)
+    fig, ax = plt.subplots(1, 1, figsize=(6, 4.5), constrained_layout=True)
     for i, depth in enumerate(depths):
-        axes[0].plot(
+        ax.plot(
             distances,
             sweep_results["drag_out"][i],
             marker="o",
             label=f"{depth:.0f} uK",
         )
-        axes[1].plot(
-            distances,
-            sweep_results["aod_capture"][i],
-            marker="s",
-            label=f"{depth:.0f} uK",
-        )
 
-    axes[0].set_xlabel("transverse distance d  [um]")
-    axes[0].set_ylabel("P(spectator dragged out of SLM)")
-    axes[0].set_title("Drag-out probability vs distance")
-    axes[0].grid(True, linestyle=":", alpha=0.6)
-    axes[0].legend(title="AOD depth", fontsize="small")
-    axes[0].set_ylim(-0.02, 1.02)
-
-    axes[1].set_xlabel("transverse distance d  [um]")
-    axes[1].set_ylabel("P(captured by fly-by AOD)")
-    axes[1].set_title("AOD-capture probability vs distance")
-    axes[1].grid(True, linestyle=":", alpha=0.6)
-    axes[1].legend(title="AOD depth", fontsize="small")
-    axes[1].set_ylim(-0.02, 1.02)
-    return fig, axes
+    ax.set_xlabel("transverse distance d  [um]")
+    ax.set_ylabel("P(spectator dragged out of SLM)")
+    ax.set_title("Drag-out probability vs distance")
+    ax.grid(True, linestyle=":", alpha=0.6)
+    ax.legend(title="AOD depth", fontsize="small")
+    ax.set_ylim(-0.02, 1.02)
+    return fig, ax
 
 
 def representative_trajectory_figure():
@@ -336,9 +320,9 @@ def main() -> None:
     lines_fig, _ = plot_sweep_lines(sweep_results)
     rep_fig = representative_trajectory_figure()
 
-    heatmap_path = os.path.join(HERE, "spectator_qubits_heatmap.png")
-    lines_path = os.path.join(HERE, "spectator_qubits_lines.png")
-    rep_path = os.path.join(HERE, "spectator_qubits_trajectory.png")
+    heatmap_path = os.path.join(RENDER_DIR, "spectator_qubits_heatmap.png")
+    lines_path = os.path.join(RENDER_DIR, "spectator_qubits_lines.png")
+    rep_path = os.path.join(RENDER_DIR, "spectator_qubits_trajectory.png")
 
     heatmap_fig.savefig(heatmap_path, dpi=180)
     lines_fig.savefig(lines_path, dpi=180)
