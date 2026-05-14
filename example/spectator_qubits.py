@@ -41,13 +41,13 @@ os.makedirs(RENDER_DIR, exist_ok=True)
 
 SLM_WAIST_RADIAL_UM = 1.2
 SLM_WAIST_AXIAL_UM = 6.0
-SLM_DEPTH_UK = 70.0
+SLM_DEPTH_UK = 500.0
 
 AOD_WAIST_RADIAL_UM = 1.0
 AOD_WAIST_AXIAL_UM = 5.0
 
 INITIAL_TEMPERATURE_UK = 8.0
-ENSEMBLE_SIZE = 800
+ENSEMBLE_SIZE = 2000
 TIMESTEP_S = float(ms(0.0002))
 DURATION_S = float(ms(0.5))
 LOSS_RADIUS_UM = 40.0
@@ -56,19 +56,20 @@ RANDOM_SEED = 42
 FLYBY_HALF_LENGTH_UM = 8.0
 FLYBY_RAMP_SAMPLES = 81
 
-DISTANCES_UM = (0.6, 1.0, 1.4, 1.8, 2.2)
-DEPTHS_UK = (50.0, 100.0, 200.0, 400.0, 800.0)
+DISTANCES_UM = (0.6, 0.9, 1.2, 1.5, 1.8, 2.1)
+# AOD/SLM depth ratios 0.1x .. 10x of SLM_DEPTH_UK.
+DEPTHS_UK = (50.0, 100.0, 250.0, 500.0, 1000.0)
 
-REPRESENTATIVE_DEPTH_UK = 200.0
+REPRESENTATIVE_DEPTH_UK = 1000.0
 REPRESENTATIVE_DISTANCE_UM = 1.0
 
 
-def build_static_slm() -> GaussianTrap:
+def build_static_slm(slm_depth_uK: float = SLM_DEPTH_UK) -> GaussianTrap:
     return GaussianTrap(
         center_m=um([0.0, 0.0, 0.0]),
         waist_radial_m=float(um(SLM_WAIST_RADIAL_UM)),
         waist_axial_m=float(um(SLM_WAIST_AXIAL_UM)),
-        depth_uK=SLM_DEPTH_UK,
+        depth_uK=slm_depth_uK,
         name="spectator SLM",
     )
 
@@ -192,11 +193,12 @@ def sweep_grid(
             )
             final_T[i, j] = result.final_temperature_uK
             print(
-                f"depth={depth:>5.1f} uK  d={d:.2f} um  "
+                f"AOD={depth:>7.1f} uK  d={d:.2f} um  "
+                f"U_AOD/U_SLM={depth / SLM_DEPTH_UK:>6.2f}  "
+                f"d/w_r={d / AOD_WAIST_RADIAL_UM:>4.2f}  "
                 f"P(drag-out)={drag[i, j]:.3f}  "
                 f"P(lost)={loss[i, j]:.3f}  "
-                f"P(captured by AOD)={aod_capture[i, j]:.3f}  "
-                f"T_final={final_T[i, j]:.2f} uK"
+                f"P(AOD)={aod_capture[i, j]:.3f}"
             )
 
     return {
@@ -215,6 +217,7 @@ def plot_sweep_heatmaps(sweep_results: dict):
     distances = sweep_results["distances_um"]
     depths = sweep_results["depths_uK"]
     grid = sweep_results["drag_out"]
+    distances_in_waists = distances / AOD_WAIST_RADIAL_UM
 
     fig, ax = plt.subplots(1, 1, figsize=(6, 4.5), constrained_layout=True)
     im = ax.imshow(
@@ -225,11 +228,11 @@ def plot_sweep_heatmaps(sweep_results: dict):
         vmin=0.0,
         vmax=1.0,
     )
-    ax.set_xticks(np.arange(len(distances)))
-    ax.set_xticklabels([f"{d:.2f}" for d in distances])
+    ax.set_xticks(np.arange(len(distances_in_waists)))
+    ax.set_xticklabels([f"{d:.2f}" for d in distances_in_waists])
     ax.set_yticks(np.arange(len(depths)))
     ax.set_yticklabels([f"{int(d)}" for d in depths])
-    ax.set_xlabel("transverse distance d  [um]")
+    ax.set_xlabel(rf"transverse distance  $d / w_r$  ($w_r = {AOD_WAIST_RADIAL_UM:.2f}$ um)")
     ax.set_ylabel("AOD depth  [uK]")
     ax.set_title("P(spectator dragged out of SLM)")
     for i in range(grid.shape[0]):
@@ -255,17 +258,18 @@ def plot_sweep_lines(sweep_results: dict):
 
     distances = sweep_results["distances_um"]
     depths = sweep_results["depths_uK"]
+    distances_in_waists = distances / AOD_WAIST_RADIAL_UM
 
     fig, ax = plt.subplots(1, 1, figsize=(6, 4.5), constrained_layout=True)
     for i, depth in enumerate(depths):
         ax.plot(
-            distances,
+            distances_in_waists,
             sweep_results["drag_out"][i],
             marker="o",
             label=f"{depth:.0f} uK",
         )
 
-    ax.set_xlabel("transverse distance d  [um]")
+    ax.set_xlabel(rf"transverse distance  $d / w_r$  ($w_r = {AOD_WAIST_RADIAL_UM:.2f}$ um)")
     ax.set_ylabel("P(spectator dragged out of SLM)")
     ax.set_title("Drag-out probability vs distance")
     ax.grid(True, linestyle=":", alpha=0.6)
@@ -314,6 +318,7 @@ def print_setup_banner() -> None:
 
 def main() -> None:
     print_setup_banner()
+
     sweep_results = sweep_grid()
 
     heatmap_fig, _ = plot_sweep_heatmaps(sweep_results)

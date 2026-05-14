@@ -38,6 +38,7 @@ from src.simulation import SimulationConfig, run_simulation  # noqa: E402
 from src.trap import (  # noqa: E402
     AstigmaticAODTrap,
     GaussianTrap,
+    GriddedTrap,
     MovingGaussianTrap,
     total_force,
     total_potential,
@@ -513,6 +514,105 @@ class AstigmaticAODTests(unittest.TestCase):
         self.assertGreater(
             lensing_result.mean_energy_gain_uK, cyl_result.mean_energy_gain_uK
         )
+
+
+
+class GriddedTrapTests(unittest.TestCase):
+    def test_gridded_trap_matches_source_gaussian(self):
+        source = GaussianTrap(
+            center_m=[1.0e-6, -0.5e-6, 0.0],
+            waist_radial_m=float(um(1.0)),
+            waist_axial_m=float(um(4.0)),
+            depth_uK=200.0,
+        )
+        half = np.array([3.0e-6, 3.0e-6, 1.2e-5])
+        bounds = np.stack([-half, half], axis=-1)
+        grid = GriddedTrap.from_trap(source, bounds_m=bounds, shape=(81, 81, 121))
+
+        rng = np.random.default_rng(0)
+        offsets = rng.uniform(-0.6, 0.6, size=(200, 3)) * half
+        query = offsets + source.center_at(0.0)
+
+        u_source = source.potential(query)
+        u_grid = grid.potential(query)
+        scale = float(np.max(np.abs(u_source))) + 1.0e-30
+        np.testing.assert_allclose(u_grid, u_source, atol=5.0e-3 * scale)
+
+        f_source = source.force(query)
+        f_grid = grid.force(query)
+        f_scale = float(np.max(np.abs(f_source))) + 1.0e-30
+        np.testing.assert_allclose(f_grid, f_source, atol=2.0e-2 * f_scale)
+
+        far = source.center_at(0.0) + np.array(
+            [[10.0e-6, 0.0, 0.0], [0.0, 0.0, 50.0e-6]]
+        )
+        np.testing.assert_allclose(grid.potential(far), np.zeros(2))
+        np.testing.assert_allclose(grid.force(far), np.zeros((2, 3)))
+
+    def test_tricubic_beats_trilinear_on_smooth_field(self):
+        source = GaussianTrap(
+            center_m=[0.0, 0.0, 0.0],
+            waist_radial_m=float(um(1.0)),
+            waist_axial_m=float(um(4.0)),
+            depth_uK=200.0,
+        )
+        half = np.array([3.0e-6, 3.0e-6, 1.2e-5])
+        bounds = np.stack([-half, half], axis=-1)
+        # A deliberately coarse grid where the trilinear error is visible.
+        shape = (21, 21, 31)
+        cubic = GriddedTrap.from_trap(source, bounds, shape, interpolation="tricubic")
+        linear = GriddedTrap.from_trap(source, bounds, shape, interpolation="trilinear")
+
+        rng = np.random.default_rng(2)
+        offsets = rng.uniform(-0.5, 0.5, size=(400, 3)) * half
+        u_ref = source.potential(offsets)
+        f_ref = source.force(offsets)
+
+        u_err_cubic = np.max(np.abs(cubic.potential(offsets) - u_ref))
+        u_err_linear = np.max(np.abs(linear.potential(offsets) - u_ref))
+        f_err_cubic = np.max(np.linalg.norm(cubic.force(offsets) - f_ref, axis=-1))
+        f_err_linear = np.max(np.linalg.norm(linear.force(offsets) - f_ref, axis=-1))
+
+        # Tricubic should be at least ~4x better on this smooth field at this grid.
+        self.assertLess(u_err_cubic, 0.25 * u_err_linear)
+        self.assertLess(f_err_cubic, 0.5 * f_err_linear)
+
+    def test_gridded_trap_with_ramp_translates_rigidly(self):
+        source = GaussianTrap(
+            center_m=[0.0, 0.0, 0.0],
+            waist_radial_m=float(um(0.8)),
+            waist_axial_m=float(um(3.0)),
+            depth_uK=150.0,
+        )
+        half = np.array([2.5e-6, 2.5e-6, 1.0e-5])
+        bounds = np.stack([-half, half], axis=-1)
+        ramp = RampSequence(
+            times_s=[0.0, 1.0e-3],
+            centers_m=[[0.0, 0.0, 0.0], [4.0e-6, 0.0, 0.0]],
+            depths_uK=[150.0, 150.0],
+            position_profile=QUINTIC_MIN_JERK,
+        )
+        grid = GriddedTrap.from_trap(
+            source, bounds_m=bounds, shape=(61, 61, 61), ramp=ramp
+        )
+
+        # At t = end of ramp the trap center should be (4 um, 0, 0); the
+        # gridded potential at that center should equal -depth_joule.
+        t_end = 1.0e-3
+        center_t = grid.center_at(t_end)
+        np.testing.assert_allclose(center_t, [4.0e-6, 0.0, 0.0], atol=1.0e-15)
+        u_at_center = grid.potential(center_t, time_s=t_end)
+        self.assertAlmostEqual(
+            float(u_at_center), -source.depth_joule, delta=1.0e-3 * abs(source.depth_joule)
+        )
+
+        # A point 4 um offset from the new center matches the source at the
+        # equivalent local offset (rigid-translation invariance).
+        offset = np.array([0.4e-6, 0.3e-6, -1.0e-6])
+        u_grid = grid.potential(center_t + offset, time_s=t_end)
+        u_source_local = source.potential(offset)
+        scale = abs(float(u_source_local)) + 1.0e-30
+        self.assertAlmostEqual(float(u_grid), float(u_source_local), delta=5.0e-3 * scale)
 
 
 if __name__ == "__main__":

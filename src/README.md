@@ -68,6 +68,9 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `MovingGaussianTrap.snapshot`: Return the equivalent `GaussianTrap` at a chosen time.
 - `AstigmaticAODTrap`: Astigmatic Gaussian with velocity-coupled focal lensing (`z01 = dxdt2z * vx`, `z02 = dxdt2z * vy`).
 - `AstigmaticAODTrap.rayleigh_length_m`: Computed `pi * w0^2 / lambda`.
+- `GriddedTrap`: Potential tabulated on a uniform 3D grid. Force is the analytical derivative of the interpolant (so it is conservative). Switchable `tricubic` (Catmull-Rom, C^1, default) or `trilinear` (C^0) modes; optional rigid translation via a ramp.
+- `GriddedTrap.from_callable`: Sample a user-provided `potential_fn(r_local)` on a uniform grid and cache it.
+- `GriddedTrap.from_trap`: Cache an existing `TrapConfig` as a gridded copy at a chosen time.
 - `total_potential` / `total_force` / `total_hessian`: Linear sum of trap evaluations at a chosen time.
 
 ## `units.py`
