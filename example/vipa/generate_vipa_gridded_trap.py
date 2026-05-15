@@ -49,7 +49,7 @@ PARAMS_NAME = "10_TWZ"
 
 # z range and grid count are not constrained by the VIPA params; set them here.
 # x/y range and counts are derived from PARAMS below.
-Z_RANGE_UM = 15
+Z_RANGE_UM = 10
 NZ = 151
 
 DEPTH_UK = 500.0

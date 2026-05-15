@@ -52,7 +52,7 @@ AOD_WAIST_RADIAL_UM = 1.0
 AOD_WAIST_AXIAL_UM = 5.0
 
 INITIAL_TEMPERATURE_UK = 8.0
-ENSEMBLE_SIZE = 1500
+ENSEMBLE_SIZE = 100
 TIMESTEP_S = float(ms(0.0002))
 DURATION_S = float(ms(0.5))
 LOSS_RADIUS_UM = 40.0
@@ -61,11 +61,13 @@ RANDOM_SEED = 42
 FLYBY_HALF_LENGTH_UM = 8.0
 FLYBY_RAMP_SAMPLES = 81
 
-# Speed multipliers around the nominal fly-by. Each is realised by scaling
-# the duration as `DURATION_S / speed_factor` (path length stays fixed).
-# Drag-out / loss / AOD-capture are averaged across these to smear out the
-# `interaction time = integer * trap period` resonance.
-FLYBY_SPEED_FACTORS = (0.7, 0.85, 1.0, 1.2, 1.4)
+# Fine speed sweep: each factor is realised by scaling the duration as
+# `DURATION_S / speed_factor` (path length stays fixed). Drag-out / loss /
+# heating are averaged across this comb to smear out the
+# `interaction time = integer * trap period` resonance, which is sharp
+# (see `spectator_qubits_speed_scan.py`). 500 log-spaced points over a
+# factor-16 range — heavy averaging compensates for ENSEMBLE_SIZE = 100.
+SPEED_FACTORS = np.geomspace(0.25, 4.0, 100)
 
 DISTANCES_UM = (0.6, 0.9, 1.2, 1.5, 1.8, 2.1)
 # AOD/SLM depth ratios 0.1x .. 10x of SLM_DEPTH_UK.
@@ -192,7 +194,7 @@ def aod_capture_probability(
 def sweep_grid(
     depths_uK: tuple[float, ...] = DEPTHS_UK,
     distances_um: tuple[float, ...] = DISTANCES_UM,
-    speed_factors: tuple[float, ...] = FLYBY_SPEED_FACTORS,
+    speed_factors: np.ndarray = SPEED_FACTORS,
 ) -> dict:
     """Sweep `(AOD depth, transverse distance)` and average over fly-by speeds.
 
@@ -260,80 +262,6 @@ def cell_mean_std(per_speed: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return mean, std
 
 
-def _speed_summary(speed_factors: np.ndarray | None) -> str:
-    nominal_speed_um_per_ms = 2.0 * FLYBY_HALF_LENGTH_UM / (DURATION_S * 1.0e3)
-    if speed_factors is None or len(speed_factors) == 0:
-        return f"AOD speed = {nominal_speed_um_per_ms:.1f} um/ms"
-    speeds = sorted(float(sf) * nominal_speed_um_per_ms for sf in speed_factors)
-    return (
-        f"AOD speeds = [{speeds[0]:.1f} .. {speeds[-1]:.1f}] um/ms "
-        f"({len(speeds)} values)"
-    )
-
-
-def _plot_value_heatmap(
-    sweep_results: dict, *,
-    per_speed_key: str,
-    title: str,
-    cell_value_format: str,
-    cell_sigma_format: str,
-    text_threshold: float,
-    cmap: str = "viridis",
-    vmin: float | None = None,
-    vmax: float | None = None,
-    colorbar_label: str | None = None,
-):
-    """Internal: render a (depth, distance) heatmap of mean +/- sigma."""
-
-    import matplotlib.pyplot as plt
-
-    distances = sweep_results["distances_um"]
-    depths = sweep_results["depths_uK"]
-    speed_factors = sweep_results.get("speed_factors")
-    per_speed = sweep_results[per_speed_key]
-    mean, sigma = cell_mean_std(per_speed)
-    distances_in_waists = distances / AOD_WAIST_RADIAL_UM
-
-    if vmin is None:
-        vmin = float(np.nanmin(mean))
-    if vmax is None:
-        vmax = float(np.nanmax(mean))
-
-    fig, ax = plt.subplots(1, 1, figsize=(7.5, 5.5), constrained_layout=True)
-    im = ax.imshow(
-        mean, origin="lower", aspect="auto",
-        cmap=cmap, vmin=vmin, vmax=vmax,
-    )
-    ax.set_xticks(np.arange(len(distances_in_waists)))
-    ax.set_xticklabels([f"{d:.2f}" for d in distances_in_waists])
-    ax.set_yticks(np.arange(len(depths)))
-    ax.set_yticklabels([f"{int(d)}" for d in depths])
-    ax.set_xlabel(rf"transverse distance  $d / w_r$  ($w_r = {AOD_WAIST_RADIAL_UM:.2f}$ um)")
-    ax.set_ylabel("AOD depth  [uK]")
-    ax.set_title(title)
-    for i in range(mean.shape[0]):
-        for j in range(mean.shape[1]):
-            value = mean[i, j]
-            if np.isnan(value):
-                ax.text(j, i, "n/a", ha="center", va="center", fontsize=7, color="0.3")
-                continue
-            color = "white" if value < text_threshold else "black"
-            ax.text(
-                j, i,
-                cell_value_format.format(value)
-                + "\n"
-                + cell_sigma_format.format(sigma[i, j]),
-                ha="center", va="center", fontsize=7, color=color,
-                linespacing=1.1,
-            )
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label=colorbar_label)
-    fig.suptitle(
-        f"SLM={SLM_DEPTH_UK:.0f} uK, T={INITIAL_TEMPERATURE_UK:.1f} uK\n"
-        f"{_speed_summary(speed_factors)}  (cells: mean / ± = sample std over speeds)"
-    )
-    return fig, ax
-
-
 def _plot_value_lines(
     sweep_results: dict, *,
     per_speed_key: str,
@@ -341,7 +269,7 @@ def _plot_value_lines(
     title: str,
     ylim: tuple[float, float] | None = None,
 ):
-    """Internal: line plot vs distance with shaded sigma band per AOD depth."""
+    """Line plot vs distance with shaded sigma band per AOD depth."""
 
     import matplotlib.pyplot as plt
 
@@ -373,19 +301,6 @@ def _plot_value_lines(
     return fig, ax
 
 
-def plot_drag_heatmap(sweep_results: dict):
-    return _plot_value_heatmap(
-        sweep_results,
-        per_speed_key="drag_out_per_speed",
-        title="<P(spectator dragged out of SLM)>",
-        cell_value_format="{:.3f}",
-        cell_sigma_format="±{:.3f}",
-        text_threshold=0.55,
-        vmin=0.0, vmax=1.0,
-        colorbar_label="P(drag-out)",
-    )
-
-
 def plot_drag_lines(sweep_results: dict):
     return _plot_value_lines(
         sweep_results,
@@ -393,25 +308,6 @@ def plot_drag_lines(sweep_results: dict):
         ylabel="P(spectator dragged out of SLM)",
         title="Drag-out probability vs distance (band = ± sample std over speeds)",
         ylim=(-0.02, 1.02),
-    )
-
-
-def plot_heating_heatmap(sweep_results: dict):
-    heating_per_speed = sweep_results["heating_uK_per_speed"]
-    mean, _ = cell_mean_std(heating_per_speed)
-    finite = np.isfinite(mean)
-    vmax = float(np.nanmax(mean[finite])) if finite.any() else 1.0
-    threshold = 0.55 * vmax if vmax > 0 else 0.0
-    return _plot_value_heatmap(
-        sweep_results,
-        per_speed_key="heating_uK_per_speed",
-        title="<heating of full ensemble (all atoms)>  [uK]",
-        cell_value_format="{:.2f}",
-        cell_sigma_format="±{:.3f}",
-        text_threshold=threshold,
-        cmap="magma",
-        vmin=0.0, vmax=max(vmax, 1.0),
-        colorbar_label="heating  [uK]",
     )
 
 
@@ -437,14 +333,15 @@ def print_setup_banner() -> None:
           f"ensemble = {ENSEMBLE_SIZE}, duration = {DURATION_S * 1.0e3:.2f} ms")
     print(f"  sweep: depths {list(DEPTHS_UK)} uK "
           f"x distances {list(DISTANCES_UM)} um "
-          f"x speed factors {list(FLYBY_SPEED_FACTORS)}")
+          f"x {len(SPEED_FACTORS)} speeds in [{SPEED_FACTORS[0]:.2f}, "
+          f"{SPEED_FACTORS[-1]:.2f}] x nominal")
     print()
 
 
 # Bump when the on-disk semantics of cached arrays change (e.g. when the
 # definition of `heating_uK_per_speed` changes), so old caches are auto
 # invalidated. Required-key check is for older caches without the version.
-_CACHE_FORMAT_VERSION = 2
+_CACHE_FORMAT_VERSION = 3
 _REQUIRED_CACHE_KEYS = frozenset((
     "depths_uK", "distances_um", "speed_factors",
     "drag_out_per_speed", "loss_per_speed",
@@ -486,9 +383,7 @@ def main() -> None:
         print(f"Loaded cached sweep from {cache_path}  (delete to force re-run)")
 
     figures = {
-        "spectator_qubits_drag_heatmap.png": plot_drag_heatmap(sweep_results),
         "spectator_qubits_drag_lines.png": plot_drag_lines(sweep_results),
-        "spectator_qubits_heating_heatmap.png": plot_heating_heatmap(sweep_results),
         "spectator_qubits_heating_lines.png": plot_heating_lines(sweep_results),
     }
     for filename, (fig, _) in figures.items():

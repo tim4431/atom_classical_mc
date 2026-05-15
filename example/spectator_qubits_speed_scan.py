@@ -1,9 +1,8 @@
 """Speed scan: drag-out / loss / AOD-capture vs AOD fly-by speed.
 
-Fixes one cell — `(AOD = 500 uK, d/w_r = 0.9)`, the cell with the largest
-speed-spread in `spectator_qubits.py` — and sweeps the fly-by speed across
-a wide range. Reveals the resonance pattern from interaction time matching
-integer multiples of the trap period.
+Fixes one cell — `(AOD = 1000 uK, d/w_r = 0.9)` — and sweeps the fly-by
+speed across a wide range. Reveals the resonance pattern from interaction
+time matching integer multiples of the SLM trap period.
 
 Run from the repository root:
 
@@ -39,10 +38,10 @@ HERE = os.path.dirname(__file__)
 RENDER_DIR = os.path.join(HERE, "render")
 os.makedirs(RENDER_DIR, exist_ok=True)
 
-CELL_AOD_DEPTH_UK = 500.0
+CELL_AOD_DEPTH_UK = 1000.0
 CELL_DISTANCE_UM = 0.9 * AOD_WAIST_RADIAL_UM
-SPEED_FACTORS = np.geomspace(0.25, 4.0, 25)  # 0.25x .. 4x of nominal
-N_ATOMS = 2000
+SPEED_FACTORS = np.geomspace(0.25, 4.0, 500)  # 500 log-spaced points, 0.25x .. 4x
+N_ATOMS = 1000
 
 
 def slm_trap_period_s() -> float:
@@ -95,15 +94,9 @@ def main() -> None:
         )
 
     fig, ax = plt.subplots(1, 1, figsize=(7.5, 5.0), constrained_layout=True)
-    ax.plot(speeds_um_per_ms, drag, marker="o", label="P(drag-out)", color="C0")
-    ax.plot(
-        speeds_um_per_ms, loss,
-        marker="s", label="P(lost to vacuum)", color="C3",
-    )
-    ax.plot(
-        speeds_um_per_ms, aod_cap,
-        marker="^", label="P(captured by AOD)", color="C2",
-    )
+    ax.plot(speeds_um_per_ms, drag, label="P(drag-out)", color="C0", linewidth=1.0)
+    ax.plot(speeds_um_per_ms, loss, label="P(lost to vacuum)", color="C3", linewidth=1.0)
+    ax.plot(speeds_um_per_ms, aod_cap, label="P(captured by AOD)", color="C2", linewidth=1.0)
     ax.axvline(
         nominal_speed_um_per_ms, color="0.5", linestyle="--", linewidth=1,
         label=f"nominal speed = {nominal_speed_um_per_ms:.1f} um/ms",
