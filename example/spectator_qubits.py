@@ -57,6 +57,7 @@ TIMESTEP_S = float(ms(0.0002))
 DURATION_S = float(ms(0.5))
 LOSS_RADIUS_UM = 40.0
 RANDOM_SEED = 42
+OUTPUT_DPI = 600
 
 FLYBY_HALF_LENGTH_UM = 8.0
 FLYBY_RAMP_SAMPLES = 81
@@ -266,10 +267,9 @@ def _plot_value_lines(
     sweep_results: dict, *,
     per_speed_key: str,
     ylabel: str,
-    title: str,
     ylim: tuple[float, float] | None = None,
 ):
-    """Line plot vs distance with shaded sigma band per AOD depth."""
+    """Line plot vs distance with sample-std error bars per trap depth."""
 
     import matplotlib.pyplot as plt
 
@@ -282,20 +282,21 @@ def _plot_value_lines(
     cmap = plt.get_cmap("viridis")
     for i, depth in enumerate(depths):
         color = cmap(i / max(len(depths) - 1, 1))
-        ax.plot(
-            distances_in_waists, mean[i],
-            marker="o", color=color, label=f"{depth:.0f} uK",
-        )
-        ax.fill_between(
+        ax.errorbar(
             distances_in_waists,
-            mean[i] - sigma[i], mean[i] + sigma[i],
-            color=color, alpha=0.18, linewidth=0,
+            mean[i],
+            yerr=sigma[i],
+            marker="o",
+            color=color,
+            capsize=3.0,
+            elinewidth=1.0,
+            linewidth=1.7,
+            label=f"{depth:.0f} uK",
         )
     ax.set_xlabel(rf"transverse distance  $d / w_r$  ($w_r = {AOD_WAIST_RADIAL_UM:.2f}$ um)")
     ax.set_ylabel(ylabel)
-    ax.set_title(title)
     ax.grid(True, linestyle=":", alpha=0.6)
-    ax.legend(title="AOD depth", fontsize="small")
+    ax.legend(title="AOD trap depth", fontsize="small")
     if ylim is not None:
         ax.set_ylim(*ylim)
     return fig, ax
@@ -306,7 +307,6 @@ def plot_drag_lines(sweep_results: dict):
         sweep_results,
         per_speed_key="drag_out_per_speed",
         ylabel="P(spectator dragged out of SLM)",
-        title="Drag-out probability vs distance (band = ± sample std over speeds)",
         ylim=(-0.02, 1.02),
     )
 
@@ -315,8 +315,7 @@ def plot_heating_lines(sweep_results: dict):
     return _plot_value_lines(
         sweep_results,
         per_speed_key="heating_uK_per_speed",
-        ylabel="heating of full ensemble  [uK]",
-        title="Heating vs distance (all atoms; band = ± sample std over speeds)",
+        ylabel="Average heating (uK)",
     )
 
 
@@ -383,13 +382,14 @@ def main() -> None:
         print(f"Loaded cached sweep from {cache_path}  (delete to force re-run)")
 
     figures = {
-        "spectator_qubits_drag_lines.png": plot_drag_lines(sweep_results),
-        "spectator_qubits_heating_lines.png": plot_heating_lines(sweep_results),
+        "spectator_qubits_drag_lines": plot_drag_lines(sweep_results),
+        "spectator_qubits_heating_lines": plot_heating_lines(sweep_results),
     }
-    for filename, (fig, _) in figures.items():
-        out_path = os.path.join(RENDER_DIR, filename)
-        fig.savefig(out_path, dpi=180)
-        print(f"saved: {out_path}")
+    for stem, (fig, _) in figures.items():
+        for ext in ("png", "pdf"):
+            out_path = os.path.join(RENDER_DIR, f"{stem}.{ext}")
+            fig.savefig(out_path, dpi=OUTPUT_DPI)
+            print(f"saved: {out_path}")
 
 
 if __name__ == "__main__":

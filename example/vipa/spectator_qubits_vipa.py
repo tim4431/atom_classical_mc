@@ -3,8 +3,8 @@
 Mirrors example/spectator_qubits.py but replaces the analytical Gaussian
 AOD with a `GriddedTrap` loaded from the .npz produced by
 `generate_vipa_gridded_trap.py`. Same static SLM, same fly-by geometry,
-same (depth x distance) sweep, but only **one speed** -- the nominal one
-implied by `DURATION_S` -- so no resonance smearing is applied.
+same (depth x distance) sweep, and the same speed-comb averaging used by
+`example/spectator_qubits.py` to smear out sharp fly-by resonances.
 
 Run from the repository root, after `generate_vipa_gridded_trap.py` has
 produced `vipa_gridded_trap.npz`:
@@ -56,11 +56,21 @@ TIMESTEP_S = float(ms(0.0002))
 DURATION_S = float(ms(0.5))
 LOSS_RADIUS_UM = 40.0
 RANDOM_SEED = 42
+OUTPUT_DPI = 600
+SWEEP_WORKERS = max(1, int(os.environ.get("VIPA_SWEEP_WORKERS", "1")))
 
 FLYBY_HALF_LENGTH_UM = 8.0
 FLYBY_RAMP_SAMPLES = 81
 
-DISTANCES_UM = (0.6, 0.9, 1.2, 1.5, 1.8, 2.1)
+# Match example/spectator_qubits.py: path length stays fixed while duration is
+# scaled by 1 / speed_factor, then statistics are averaged across this comb.
+SPEED_FACTORS = np.geomspace(0.25, 4.0, 100)
+
+# Use the same normalized distance samples as example/spectator_qubits.py.
+# Since the RIPA/VIPA nominal waist differs from AOD, the physical offsets
+# are scaled so the plotted d / w points match the AOD figure.
+DISTANCES_D_OVER_W = (0.6, 0.9, 1.2, 1.5, 1.8, 2.1)
+DISTANCES_UM = tuple(float(d * VIPA_WAIST_UM) for d in DISTANCES_D_OVER_W)
 DEPTHS_UK = (50.0, 100.0, 250.0, 500.0, 1000.0)
 
 # Representative case for the fly-by animation. Chosen so the GIF shows a
@@ -72,6 +82,7 @@ ANIM_TRAJECTORY_STRIDE = 5
 ANIM_FRAMES = 80
 ANIM_FPS = 20
 ANIM_GRID_N = 200
+GENERATE_ANIMATION = False
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +122,11 @@ def load_vipa_grid(npz_path: str = VIPA_NPZ_PATH) -> dict:
 
 
 def build_vipa_trap(
-    grid_data: dict, depth_uK: float, ramp: RampSequence
+    grid_data: dict,
+    depth_uK: float,
+    ramp: RampSequence,
+    *,
+    potential_j: np.ndarray | None = None,
 ) -> GriddedTrap:
     """Build a `GriddedTrap` with peak depth `depth_uK` and the given ramp.
 
@@ -119,8 +134,9 @@ def build_vipa_trap(
     depth in joules to make the per-depth potential grid.
     """
 
-    depth_j = float(microkelvin_to_joule(depth_uK))
-    potential_j = -depth_j * grid_data["intensity_normalized"]
+    if potential_j is None:
+        depth_j = float(microkelvin_to_joule(depth_uK))
+        potential_j = -depth_j * grid_data["intensity_normalized"]
     return GriddedTrap(
         grid_potential_j=potential_j,
         origin_local_m=grid_data["origin_local_m"],
@@ -170,11 +186,11 @@ def build_flyby_ramp(
     )
 
 
-def build_config() -> SimulationConfig:
+def build_config(duration_s: float = DURATION_S) -> SimulationConfig:
     return SimulationConfig(
         initial_temperature_uK=INITIAL_TEMPERATURE_UK,
         timestep_s=TIMESTEP_S,
-        duration_s=DURATION_S,
+        duration_s=duration_s,
         ensemble_size=ENSEMBLE_SIZE,
         random_seed=RANDOM_SEED,
         loss_radius_m=float(um(LOSS_RADIUS_UM)),
@@ -186,11 +202,13 @@ def run_flyby(
     grid_data: dict, depth_uK: float, transverse_distance_um: float,
     *,
     cached_slm: GaussianTrap | None = None,
+    duration_s: float = DURATION_S,
+    potential_j: np.ndarray | None = None,
 ) -> tuple[SimulationResult, RampSequence, GaussianTrap, GriddedTrap]:
     slm = cached_slm if cached_slm is not None else build_static_slm()
-    ramp = build_flyby_ramp(transverse_distance_um)
-    vipa = build_vipa_trap(grid_data, depth_uK, ramp)
-    config = build_config()
+    ramp = build_flyby_ramp(transverse_distance_um, duration_s=duration_s)
+    vipa = build_vipa_trap(grid_data, depth_uK, ramp, potential_j=potential_j)
+    config = build_config(duration_s=duration_s)
     result = run_simulation([slm, vipa], config)
     return result, ramp, slm, vipa
 
@@ -210,7 +228,7 @@ def drag_out_probability(result: SimulationResult, slm: GaussianTrap) -> float:
 
 
 def vipa_capture_probability(
-    result: SimulationResult, vipa: GriddedTrap
+    result: SimulationResult, vipa: GriddedTrap, duration_s: float
 ) -> float:
     """Bound to the (moving) VIPA trap at the end of the fly-by."""
 
@@ -220,7 +238,7 @@ def vipa_capture_probability(
         result.final_velocities_m_per_s,
         vipa,
         mass_kg=RB87_MASS_KG,
-        time_s=DURATION_S,
+        time_s=duration_s,
     )
     return float(np.mean(captured))
 
@@ -228,52 +246,182 @@ def vipa_capture_probability(
 # ---------------------------------------------------------------------------
 # Sweep + plots.
 # ---------------------------------------------------------------------------
-def sweep_grid(grid_data: dict) -> dict:
-    """Single-speed sweep over (depth, distance)."""
+_WORKER_GRID_DATA: dict | None = None
+_WORKER_SPEED_FACTORS: np.ndarray | None = None
+_WORKER_SLM: GaussianTrap | None = None
 
-    n_depth = len(DEPTHS_UK)
-    n_dist = len(DISTANCES_UM)
 
-    drag = np.zeros((n_depth, n_dist))
-    loss = np.zeros((n_depth, n_dist))
-    capture = np.zeros((n_depth, n_dist))
-    heating = np.zeros((n_depth, n_dist))
+def _format_cell_summary(
+    depth: float,
+    distance: float,
+    drag_values: np.ndarray,
+    loss_values: np.ndarray,
+    capture_values: np.ndarray,
+    heating_values: np.ndarray,
+) -> str:
+    return (
+        f"VIPA={depth:>7.1f} uK  d={distance:.2f} um  "
+        f"U_VIPA/U_SLM={depth / SLM_DEPTH_UK:>6.2f}  "
+        f"d/w={distance / VIPA_WAIST_UM:>4.2f}  "
+        f"<P(drag)>={drag_values.mean():.3f}  "
+        f"<P(lost)>={loss_values.mean():.3f}  "
+        f"<P(VIPA)>={capture_values.mean():.3f}  "
+        f"<heating>={np.nanmean(heating_values):.2f} uK"
+    )
+
+
+def _init_sweep_worker() -> None:
+    global _WORKER_SLM
+    _WORKER_SLM = build_static_slm()
+
+
+def _run_sweep_cell(
+    task: tuple[int, int, float, float],
+) -> tuple[int, int, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    if _WORKER_GRID_DATA is None or _WORKER_SPEED_FACTORS is None:
+        raise RuntimeError("Sweep worker was not initialized with grid data.")
+    slm = _WORKER_SLM if _WORKER_SLM is not None else build_static_slm()
+    i, j, depth, distance = task
+    depth_j = float(microkelvin_to_joule(depth))
+    potential_j = -depth_j * _WORKER_GRID_DATA["intensity_normalized"]
+    n_speeds = len(_WORKER_SPEED_FACTORS)
+    drag_values = np.zeros(n_speeds)
+    loss_values = np.zeros(n_speeds)
+    capture_values = np.zeros(n_speeds)
+    heating_values = np.zeros(n_speeds)
+
+    for k, sf in enumerate(_WORKER_SPEED_FACTORS):
+        duration_s = DURATION_S / sf
+        result, ramp, _, vipa = run_flyby(
+            _WORKER_GRID_DATA,
+            depth,
+            distance,
+            cached_slm=slm,
+            duration_s=duration_s,
+            potential_j=potential_j,
+        )
+        drag_values[k] = drag_out_probability(result, slm)
+        loss_values[k] = result.loss_fraction
+        capture_values[k] = vipa_capture_probability(result, vipa, duration_s)
+        heating_values[k] = result.temperature_gain_uK_at(survivors_only=False)
+
+    return i, j, drag_values, loss_values, capture_values, heating_values
+
+
+def sweep_grid(
+    grid_data: dict,
+    depths_uK: tuple[float, ...] = DEPTHS_UK,
+    distances_um: tuple[float, ...] = DISTANCES_UM,
+    speed_factors: np.ndarray = SPEED_FACTORS,
+    workers: int = SWEEP_WORKERS,
+) -> dict:
+    """Sweep `(RIPA depth, distance)` and average over fly-by speeds."""
+
+    n_speeds = len(speed_factors)
+    shape = (len(depths_uK), len(distances_um), n_speeds)
+    drag_per_speed = np.zeros(shape)
+    loss_per_speed = np.zeros(shape)
+    capture_per_speed = np.zeros(shape)
+    heating_per_speed = np.zeros(shape)
+    workers = max(1, int(workers))
+
+    if workers > 1:
+        import multiprocessing as mp
+
+        global _WORKER_GRID_DATA, _WORKER_SPEED_FACTORS
+        _WORKER_GRID_DATA = grid_data
+        _WORKER_SPEED_FACTORS = np.asarray(speed_factors, dtype=float)
+        tasks = [
+            (i, j, float(depth), float(distance))
+            for i, depth in enumerate(depths_uK)
+            for j, distance in enumerate(distances_um)
+        ]
+        print(f"Running sweep with {workers} worker processes")
+        ctx = mp.get_context("fork")
+        with ctx.Pool(processes=workers, initializer=_init_sweep_worker) as pool:
+            for i, j, drag, loss, capture, heating in pool.imap_unordered(
+                _run_sweep_cell, tasks
+            ):
+                drag_per_speed[i, j] = drag
+                loss_per_speed[i, j] = loss
+                capture_per_speed[i, j] = capture
+                heating_per_speed[i, j] = heating
+                print(
+                    _format_cell_summary(
+                        float(depths_uK[i]), float(distances_um[j]),
+                        drag, loss, capture, heating,
+                    )
+                )
+        _WORKER_GRID_DATA = None
+        _WORKER_SPEED_FACTORS = None
+        return {
+            "depths_uK": np.asarray(depths_uK, dtype=float),
+            "distances_um": np.asarray(distances_um, dtype=float),
+            "speed_factors": np.asarray(speed_factors, dtype=float),
+            "drag_out_per_speed": drag_per_speed,
+            "loss_per_speed": loss_per_speed,
+            "vipa_capture_per_speed": capture_per_speed,
+            "heating_uK_per_speed": heating_per_speed,
+        }
 
     slm = build_static_slm()
-    for i, depth in enumerate(DEPTHS_UK):
-        for j, d in enumerate(DISTANCES_UM):
-            result, ramp, _, vipa = run_flyby(
-                grid_data, depth, d, cached_slm=slm
-            )
-            drag[i, j] = drag_out_probability(result, slm)
-            loss[i, j] = result.loss_fraction
-            capture[i, j] = vipa_capture_probability(result, vipa)
-            heating[i, j] = result.temperature_gain_uK_at(survivors_only=False)
+    for i, depth in enumerate(depths_uK):
+        depth_j = float(microkelvin_to_joule(depth))
+        potential_j = -depth_j * grid_data["intensity_normalized"]
+        for j, d in enumerate(distances_um):
+            for k, sf in enumerate(speed_factors):
+                duration_s = DURATION_S / sf
+                result, ramp, _, vipa = run_flyby(
+                    grid_data, depth, d,
+                    cached_slm=slm,
+                    duration_s=duration_s,
+                    potential_j=potential_j,
+                )
+                drag_per_speed[i, j, k] = drag_out_probability(result, slm)
+                loss_per_speed[i, j, k] = result.loss_fraction
+                capture_per_speed[i, j, k] = vipa_capture_probability(
+                    result, vipa, duration_s
+                )
+                heating_per_speed[i, j, k] = result.temperature_gain_uK_at(
+                    survivors_only=False
+                )
+
             print(
-                f"VIPA={depth:>7.1f} uK  d={d:.2f} um  "
-                f"U_VIPA/U_SLM={depth / SLM_DEPTH_UK:>6.2f}  "
-                f"d/w={d / VIPA_WAIST_UM:>4.2f}  "
-                f"P(drag)={drag[i, j]:.3f}  "
-                f"P(lost)={loss[i, j]:.3f}  "
-                f"P(VIPA)={capture[i, j]:.3f}  "
-                f"heating={heating[i, j]:.2f} uK"
+                _format_cell_summary(
+                    float(depth), float(d),
+                    drag_per_speed[i, j],
+                    loss_per_speed[i, j],
+                    capture_per_speed[i, j],
+                    heating_per_speed[i, j],
+                )
             )
 
     return {
-        "depths_uK": np.asarray(DEPTHS_UK, dtype=float),
-        "distances_um": np.asarray(DISTANCES_UM, dtype=float),
-        "drag_out": drag,
-        "loss": loss,
-        "vipa_capture": capture,
-        "heating_uK": heating,
+        "depths_uK": np.asarray(depths_uK, dtype=float),
+        "distances_um": np.asarray(distances_um, dtype=float),
+        "speed_factors": np.asarray(speed_factors, dtype=float),
+        "drag_out_per_speed": drag_per_speed,
+        "loss_per_speed": loss_per_speed,
+        "vipa_capture_per_speed": capture_per_speed,
+        "heating_uK_per_speed": heating_per_speed,
     }
+
+
+def cell_mean_std(per_speed: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-cell mean and sample std along the speed axis. NaN-safe."""
+
+    mean = np.nanmean(per_speed, axis=-1)
+    if per_speed.shape[-1] > 1:
+        std = np.nanstd(per_speed, axis=-1, ddof=1)
+    else:
+        std = np.zeros_like(mean)
+    return mean, std
 
 
 def _plot_value_lines(
     sweep_results: dict, *,
-    key: str,
+    per_speed_key: str,
     ylabel: str,
-    title: str,
     ylim: tuple[float, float] | None = None,
 ):
     import matplotlib.pyplot as plt
@@ -281,21 +429,27 @@ def _plot_value_lines(
     distances = sweep_results["distances_um"]
     depths = sweep_results["depths_uK"]
     distances_in_waists = distances / VIPA_WAIST_UM
-    values = sweep_results[key]
+    mean, sigma = cell_mean_std(sweep_results[per_speed_key])
 
     fig, ax = plt.subplots(1, 1, figsize=(6.5, 4.5), constrained_layout=True)
     cmap = plt.get_cmap("viridis")
     for i, depth in enumerate(depths):
         color = cmap(i / max(len(depths) - 1, 1))
-        ax.plot(
-            distances_in_waists, values[i],
-            marker="o", color=color, label=f"{depth:.0f} uK",
+        ax.errorbar(
+            distances_in_waists,
+            mean[i],
+            yerr=sigma[i],
+            marker="o",
+            color=color,
+            capsize=3.0,
+            elinewidth=1.0,
+            linewidth=1.7,
+            label=f"{depth:.0f} uK",
         )
     ax.set_xlabel(rf"transverse distance  $d / w$  ($w = {VIPA_WAIST_UM:.2f}$ µm)")
     ax.set_ylabel(ylabel)
-    ax.set_title(title)
     ax.grid(True, linestyle=":", alpha=0.6)
-    ax.legend(title="VIPA depth", fontsize="small")
+    ax.legend(title="RIPA trap depth", fontsize="small")
     if ylim is not None:
         ax.set_ylim(*ylim)
     return fig, ax
@@ -304,9 +458,8 @@ def _plot_value_lines(
 def plot_drag_lines(sweep_results: dict):
     return _plot_value_lines(
         sweep_results,
-        key="drag_out",
+        per_speed_key="drag_out_per_speed",
         ylabel="P(spectator dragged out of SLM)",
-        title="Drag-out probability vs distance  (VIPA fly-by, single speed)",
         ylim=(-0.02, 1.02),
     )
 
@@ -314,18 +467,16 @@ def plot_drag_lines(sweep_results: dict):
 def plot_heating_lines(sweep_results: dict):
     return _plot_value_lines(
         sweep_results,
-        key="heating_uK",
-        ylabel="heating of full ensemble  [µK]",
-        title="Heating vs distance  (VIPA fly-by, single speed)",
+        per_speed_key="heating_uK_per_speed",
+        ylabel="Average heating (uK)",
     )
 
 
 def plot_capture_lines(sweep_results: dict):
     return _plot_value_lines(
         sweep_results,
-        key="vipa_capture",
+        per_speed_key="vipa_capture_per_speed",
         ylabel="P(captured by VIPA at end of fly-by)",
-        title="VIPA capture probability vs distance  (single speed)",
         ylim=(-0.02, 1.02),
     )
 
@@ -499,32 +650,85 @@ def print_setup_banner(grid_data: dict) -> None:
           f"y = d, z = 0; speed = {speed_um_per_ms:.1f} um/ms")
     print(f"  initial T = {INITIAL_TEMPERATURE_UK:.1f} uK, "
           f"ensemble = {ENSEMBLE_SIZE}, duration = {DURATION_S * 1.0e3:.2f} ms")
-    print(f"  sweep: depths {list(DEPTHS_UK)} uK x distances {list(DISTANCES_UM)} um "
-          f"(single speed)")
+    print(f"  sweep: depths {list(DEPTHS_UK)} uK x d/w samples "
+          f"{list(DISTANCES_D_OVER_W)} "
+          f"(distances {[round(d, 3) for d in DISTANCES_UM]} um) "
+          f"x {len(SPEED_FACTORS)} speeds in [{SPEED_FACTORS[0]:.2f}, "
+          f"{SPEED_FACTORS[-1]:.2f}] x nominal")
+    if SWEEP_WORKERS > 1:
+        print(f"  sweep workers = {SWEEP_WORKERS}")
     print()
+
+
+_CACHE_FORMAT_VERSION = 2
+_REQUIRED_CACHE_KEYS = frozenset((
+    "depths_uK", "distances_um", "speed_factors",
+    "drag_out_per_speed", "loss_per_speed",
+    "vipa_capture_per_speed", "heating_uK_per_speed",
+))
+
+
+def _load_cache_or_none(cache_path: str) -> dict | None:
+    if not os.path.exists(cache_path):
+        return None
+    with np.load(cache_path) as data:
+        keys = set(data.files)
+        if not _REQUIRED_CACHE_KEYS.issubset(keys):
+            print(f"Cache at {cache_path} is stale (missing keys); will re-run")
+            return None
+        version = int(data["_format_version"]) if "_format_version" in keys else 0
+        if version != _CACHE_FORMAT_VERSION:
+            print(
+                f"Cache at {cache_path} is format v{version}, "
+                f"expected v{_CACHE_FORMAT_VERSION}; will re-run"
+            )
+            return None
+        expected = {
+            "depths_uK": np.asarray(DEPTHS_UK, dtype=float),
+            "distances_um": np.asarray(DISTANCES_UM, dtype=float),
+            "speed_factors": np.asarray(SPEED_FACTORS, dtype=float),
+        }
+        for key, expected_values in expected.items():
+            values = np.asarray(data[key], dtype=float)
+            if values.shape != expected_values.shape or not np.allclose(
+                values, expected_values
+            ):
+                print(f"Cache at {cache_path} is stale ({key} changed); will re-run")
+                return None
+        return {k: data[k] for k in keys if k != "_format_version"}
 
 
 def main() -> None:
     grid_data = load_vipa_grid()
     print_setup_banner(grid_data)
 
-    sweep_results = sweep_grid(grid_data)
-
     cache_path = os.path.join(RENDER_DIR, "spectator_qubits_vipa_sweep.npz")
-    np.savez(cache_path, **sweep_results)
-    print(f"saved sweep results: {cache_path}")
+    sweep_results = _load_cache_or_none(cache_path)
+    if sweep_results is None:
+        sweep_results = sweep_grid(grid_data)
+        np.savez(
+            cache_path, **sweep_results,
+            _format_version=np.int32(_CACHE_FORMAT_VERSION),
+        )
+        print(f"saved cache: {cache_path}")
+    else:
+        print(f"Loaded cached sweep from {cache_path}  (delete to force re-run)")
 
     figures = {
-        "spectator_qubits_vipa_drag_lines.png": plot_drag_lines(sweep_results),
-        "spectator_qubits_vipa_heating_lines.png": plot_heating_lines(sweep_results),
-        "spectator_qubits_vipa_capture_lines.png": plot_capture_lines(sweep_results),
+        "spectator_qubits_vipa_drag_lines": plot_drag_lines(sweep_results),
+        "spectator_qubits_vipa_heating_lines": plot_heating_lines(sweep_results),
+        "spectator_qubits_vipa_capture_lines": plot_capture_lines(sweep_results),
     }
-    for filename, (fig, _) in figures.items():
-        out_path = os.path.join(RENDER_DIR, filename)
-        fig.savefig(out_path, dpi=180)
-        print(f"saved: {out_path}")
+    for stem, (fig, _) in figures.items():
+        for ext in ("png", "pdf"):
+            out_path = os.path.join(RENDER_DIR, f"{stem}.{ext}")
+            fig.savefig(out_path, dpi=OUTPUT_DPI)
+            print(f"saved: {out_path}")
 
     # Representative fly-by animation.
+    if not GENERATE_ANIMATION:
+        return
+
     print()
     print(
         f"Rendering animation for VIPA={ANIM_DEPTH_UK:.0f} uK, "
