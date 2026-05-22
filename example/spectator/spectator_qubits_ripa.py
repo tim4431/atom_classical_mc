@@ -1,15 +1,15 @@
-"""Spectator-qubit fly-by drag-out and heating study with a gridded VIPA trap.
+"""Spectator-qubit fly-by drag-out and heating study with a gridded RIPA trap.
 
 Mirrors example/spectator_qubits.py but replaces the analytical Gaussian
 AOD with a `GriddedTrap` loaded from the .npz produced by
-`generate_vipa_gridded_trap.py`. Same static SLM, same fly-by geometry,
+`generate_ripa_gridded_trap.py`. Same static SLM, same fly-by geometry,
 same (depth x distance) sweep, and the same speed-comb averaging used by
 `example/spectator_qubits.py` to smear out sharp fly-by resonances.
 
-Run from the repository root, after `generate_vipa_gridded_trap.py` has
-produced `vipa_gridded_trap.npz`:
+Run from the repository root, after `generate_ripa_gridded_trap.py` has
+produced `ripa_gridded_trap.npz`:
 
-    python3 example/vipa/spectator_qubits_vipa.py
+    python3 example/spectator/spectator_qubits_ripa.py
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from src.simulation import (  # noqa: E402
 from src.trap import GaussianTrap, GriddedTrap, total_potential  # noqa: E402
 from src.units import joule_to_microkelvin, microkelvin_to_joule, ms, um  # noqa: E402
 
-RENDER_DIR = os.path.join(HERE, "render")
+RENDER_DIR = os.path.join(HERE, "render_ripa")
 os.makedirs(RENDER_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
@@ -44,11 +44,13 @@ SLM_WAIST_RADIAL_UM = 1.2
 SLM_WAIST_AXIAL_UM = 6.0
 SLM_DEPTH_UK = 500.0
 
-# Effective waist of the VIPA focal spot for plot/print labelling only;
+# Effective waist of the RIPA focal spot for plot/print labelling only;
 # `GriddedTrap` is shape-defined by the tabulated potential, not by a waist.
-VIPA_WAIST_UM = 1.18
+RIPA_WAIST_UM = 1.18
 
-VIPA_NPZ_PATH = os.path.join(HERE, "vipa_gridded_trap.npz")
+# The npz is produced by `example/spectator/ripa/generate_ripa_gridded_trap.py`
+# and stays next to that generator — we just consume it from here.
+RIPA_NPZ_PATH = os.path.join(HERE, "ripa", "ripa_gridded_trap.npz")
 
 INITIAL_TEMPERATURE_UK = 8.0
 ENSEMBLE_SIZE = 100
@@ -57,7 +59,7 @@ DURATION_S = float(ms(0.5))
 LOSS_RADIUS_UM = 40.0
 RANDOM_SEED = 42
 OUTPUT_DPI = 600
-SWEEP_WORKERS = max(1, int(os.environ.get("VIPA_SWEEP_WORKERS", "1")))
+SWEEP_WORKERS = max(1, int(os.environ.get("RIPA_SWEEP_WORKERS", "1")))
 
 FLYBY_HALF_LENGTH_UM = 8.0
 FLYBY_RAMP_SAMPLES = 81
@@ -67,14 +69,14 @@ FLYBY_RAMP_SAMPLES = 81
 SPEED_FACTORS = np.geomspace(0.25, 4.0, 100)
 
 # Use the same normalized distance samples as example/spectator_qubits.py.
-# Since the RIPA/VIPA nominal waist differs from AOD, the physical offsets
+# Since the RIPA/RIPA nominal waist differs from AOD, the physical offsets
 # are scaled so the plotted d / w points match the AOD figure.
 DISTANCES_D_OVER_W = (0.6, 0.9, 1.2, 1.5, 1.8, 2.1)
-DISTANCES_UM = tuple(float(d * VIPA_WAIST_UM) for d in DISTANCES_D_OVER_W)
+DISTANCES_UM = tuple(float(d * RIPA_WAIST_UM) for d in DISTANCES_D_OVER_W)
 DEPTHS_UK = (50.0, 100.0, 250.0, 500.0, 1000.0)
 
 # Representative case for the fly-by animation. Chosen so the GIF shows a
-# mix of "stays in SLM" and "dragged out by VIPA" outcomes.
+# mix of "stays in SLM" and "dragged out by RIPA" outcomes.
 ANIM_DEPTH_UK = 500.0
 ANIM_DISTANCE_UM = 1.5
 ANIM_ENSEMBLE_SIZE = 60
@@ -86,13 +88,13 @@ GENERATE_ANIMATION = False
 
 
 # ---------------------------------------------------------------------------
-# VIPA grid loading + per-depth rescaling.
+# RIPA grid loading + per-depth rescaling.
 # ---------------------------------------------------------------------------
-def load_vipa_grid(npz_path: str = VIPA_NPZ_PATH) -> dict:
+def load_ripa_grid(npz_path: str = RIPA_NPZ_PATH) -> dict:
     if not os.path.exists(npz_path):
         raise FileNotFoundError(
-            f"VIPA grid not found at {npz_path}. "
-            f"Run `python3 example/vipa/generate_vipa_gridded_trap.py` first."
+            f"RIPA grid not found at {npz_path}. "
+            f"Run `python3 example/spectator/ripa/generate_ripa_gridded_trap.py` first."
         )
     with np.load(npz_path) as data:
         x_axis = np.asarray(data["x_axis"], dtype=float)
@@ -121,7 +123,7 @@ def load_vipa_grid(npz_path: str = VIPA_NPZ_PATH) -> dict:
     }
 
 
-def build_vipa_trap(
+def build_ripa_trap(
     grid_data: dict,
     depth_uK: float,
     ramp: RampSequence,
@@ -144,7 +146,7 @@ def build_vipa_trap(
         center_m=np.zeros(3, dtype=float),
         ramp=ramp,
         interpolation="tricubic",
-        name=f"vipa_{grid_data['params_name']}",
+        name=f"ripa_{grid_data['params_name']}",
     )
 
 
@@ -207,10 +209,10 @@ def run_flyby(
 ) -> tuple[SimulationResult, RampSequence, GaussianTrap, GriddedTrap]:
     slm = cached_slm if cached_slm is not None else build_static_slm()
     ramp = build_flyby_ramp(transverse_distance_um, duration_s=duration_s)
-    vipa = build_vipa_trap(grid_data, depth_uK, ramp, potential_j=potential_j)
+    ripa = build_ripa_trap(grid_data, depth_uK, ramp, potential_j=potential_j)
     config = build_config(duration_s=duration_s)
-    result = run_simulation([slm, vipa], config)
-    return result, ramp, slm, vipa
+    result = run_simulation([slm, ripa], config)
+    return result, ramp, slm, ripa
 
 
 # ---------------------------------------------------------------------------
@@ -227,16 +229,16 @@ def drag_out_probability(result: SimulationResult, slm: GaussianTrap) -> float:
     return 1.0 - float(np.mean(still_in_slm))
 
 
-def vipa_capture_probability(
-    result: SimulationResult, vipa: GriddedTrap, duration_s: float
+def ripa_capture_probability(
+    result: SimulationResult, ripa: GriddedTrap, duration_s: float
 ) -> float:
-    """Bound to the (moving) VIPA trap at the end of the fly-by."""
+    """Bound to the (moving) RIPA trap at the end of the fly-by."""
 
     survivors = ~result.lost
     captured = survivors & bound_to_trap(
         result.final_positions_m,
         result.final_velocities_m_per_s,
-        vipa,
+        ripa,
         mass_kg=RB87_MASS_KG,
         time_s=duration_s,
     )
@@ -260,12 +262,12 @@ def _format_cell_summary(
     heating_values: np.ndarray,
 ) -> str:
     return (
-        f"VIPA={depth:>7.1f} uK  d={distance:.2f} um  "
-        f"U_VIPA/U_SLM={depth / SLM_DEPTH_UK:>6.2f}  "
-        f"d/w={distance / VIPA_WAIST_UM:>4.2f}  "
+        f"RIPA={depth:>7.1f} uK  d={distance:.2f} um  "
+        f"U_RIPA/U_SLM={depth / SLM_DEPTH_UK:>6.2f}  "
+        f"d/w={distance / RIPA_WAIST_UM:>4.2f}  "
         f"<P(drag)>={drag_values.mean():.3f}  "
         f"<P(lost)>={loss_values.mean():.3f}  "
-        f"<P(VIPA)>={capture_values.mean():.3f}  "
+        f"<P(RIPA)>={capture_values.mean():.3f}  "
         f"<heating>={np.nanmean(heating_values):.2f} uK"
     )
 
@@ -292,7 +294,7 @@ def _run_sweep_cell(
 
     for k, sf in enumerate(_WORKER_SPEED_FACTORS):
         duration_s = DURATION_S / sf
-        result, ramp, _, vipa = run_flyby(
+        result, ramp, _, ripa = run_flyby(
             _WORKER_GRID_DATA,
             depth,
             distance,
@@ -302,7 +304,7 @@ def _run_sweep_cell(
         )
         drag_values[k] = drag_out_probability(result, slm)
         loss_values[k] = result.loss_fraction
-        capture_values[k] = vipa_capture_probability(result, vipa, duration_s)
+        capture_values[k] = ripa_capture_probability(result, ripa, duration_s)
         heating_values[k] = result.temperature_gain_uK_at(survivors_only=False)
 
     return i, j, drag_values, loss_values, capture_values, heating_values
@@ -360,7 +362,7 @@ def sweep_grid(
             "speed_factors": np.asarray(speed_factors, dtype=float),
             "drag_out_per_speed": drag_per_speed,
             "loss_per_speed": loss_per_speed,
-            "vipa_capture_per_speed": capture_per_speed,
+            "ripa_capture_per_speed": capture_per_speed,
             "heating_uK_per_speed": heating_per_speed,
         }
 
@@ -371,7 +373,7 @@ def sweep_grid(
         for j, d in enumerate(distances_um):
             for k, sf in enumerate(speed_factors):
                 duration_s = DURATION_S / sf
-                result, ramp, _, vipa = run_flyby(
+                result, ramp, _, ripa = run_flyby(
                     grid_data, depth, d,
                     cached_slm=slm,
                     duration_s=duration_s,
@@ -379,8 +381,8 @@ def sweep_grid(
                 )
                 drag_per_speed[i, j, k] = drag_out_probability(result, slm)
                 loss_per_speed[i, j, k] = result.loss_fraction
-                capture_per_speed[i, j, k] = vipa_capture_probability(
-                    result, vipa, duration_s
+                capture_per_speed[i, j, k] = ripa_capture_probability(
+                    result, ripa, duration_s
                 )
                 heating_per_speed[i, j, k] = result.temperature_gain_uK_at(
                     survivors_only=False
@@ -402,7 +404,7 @@ def sweep_grid(
         "speed_factors": np.asarray(speed_factors, dtype=float),
         "drag_out_per_speed": drag_per_speed,
         "loss_per_speed": loss_per_speed,
-        "vipa_capture_per_speed": capture_per_speed,
+        "ripa_capture_per_speed": capture_per_speed,
         "heating_uK_per_speed": heating_per_speed,
     }
 
@@ -428,7 +430,7 @@ def _plot_value_lines(
 
     distances = sweep_results["distances_um"]
     depths = sweep_results["depths_uK"]
-    distances_in_waists = distances / VIPA_WAIST_UM
+    distances_in_waists = distances / RIPA_WAIST_UM
     mean, sigma = cell_mean_std(sweep_results[per_speed_key])
 
     fig, ax = plt.subplots(1, 1, figsize=(6.5, 4.5), constrained_layout=True)
@@ -446,7 +448,7 @@ def _plot_value_lines(
             linewidth=1.7,
             label=f"{depth:.0f} uK",
         )
-    ax.set_xlabel(rf"transverse distance  $d / w$  ($w = {VIPA_WAIST_UM:.2f}$ µm)")
+    ax.set_xlabel(rf"transverse distance  $d / w$  ($w = {RIPA_WAIST_UM:.2f}$ µm)")
     ax.set_ylabel(ylabel)
     ax.grid(True, linestyle=":", alpha=0.6)
     ax.legend(title="RIPA trap depth", fontsize="small")
@@ -475,8 +477,8 @@ def plot_heating_lines(sweep_results: dict):
 def plot_capture_lines(sweep_results: dict):
     return _plot_value_lines(
         sweep_results,
-        per_speed_key="vipa_capture_per_speed",
-        ylabel="P(captured by VIPA at end of fly-by)",
+        per_speed_key="ripa_capture_per_speed",
+        ylabel="P(captured by RIPA at end of fly-by)",
         ylim=(-0.02, 1.02),
     )
 
@@ -491,7 +493,7 @@ def run_flyby_with_trajectories(
 
     slm = build_static_slm()
     ramp = build_flyby_ramp(transverse_distance_um)
-    vipa = build_vipa_trap(grid_data, depth_uK, ramp)
+    ripa = build_ripa_trap(grid_data, depth_uK, ramp)
     config = SimulationConfig(
         initial_temperature_uK=INITIAL_TEMPERATURE_UK,
         timestep_s=TIMESTEP_S,
@@ -503,14 +505,14 @@ def run_flyby_with_trajectories(
         store_trajectories=True,
         trajectory_stride=ANIM_TRAJECTORY_STRIDE,
     )
-    result = run_simulation([slm, vipa], config)
-    return result, ramp, slm, vipa
+    result = run_simulation([slm, ripa], config)
+    return result, ramp, slm, ripa
 
 
 def render_flyby_gif(
     result: SimulationResult,
     slm: GaussianTrap,
-    vipa: GriddedTrap,
+    ripa: GriddedTrap,
     ramp: RampSequence,
     output_path: str,
     *,
@@ -540,7 +542,7 @@ def render_flyby_gif(
     frame_indices = np.linspace(0, n_stored - 1, n_frames).astype(int)
 
     # xy view: covers the full ramp travel in x; a few um in y around the SLM
-    # and the VIPA's standoff distance.
+    # and the RIPA's standoff distance.
     x_min_um, x_max_um = -FLYBY_HALF_LENGTH_UM - 1.0, FLYBY_HALF_LENGTH_UM + 1.0
     y_half_um = max(2.0 * ANIM_DISTANCE_UM, 2.5)
     y_min_um, y_max_um = -y_half_um, y_half_um
@@ -552,11 +554,11 @@ def render_flyby_gif(
     pts_xy = np.stack([X_xy, Y_xy, np.zeros_like(X_xy)], axis=-1)
 
     # Fix the colormap range so it doesn't dance frame-to-frame. The deepest
-    # well present anywhere is max(SLM, VIPA) depth.
-    vipa_depth_uK = float(
-        -joule_to_microkelvin(float(np.min(vipa.grid_potential_j)))
+    # well present anywhere is max(SLM, RIPA) depth.
+    ripa_depth_uK = float(
+        -joule_to_microkelvin(float(np.min(ripa.grid_potential_j)))
     )
-    vmin_uK = -max(SLM_DEPTH_UK, vipa_depth_uK)
+    vmin_uK = -max(SLM_DEPTH_UK, ripa_depth_uK)
 
     images: list = []
     print(f"Rendering {n_frames} frames for GIF ({output_path})...")
@@ -566,8 +568,8 @@ def render_flyby_gif(
         lost = lost_all[idx]
         survived = ~lost
 
-        u_xy_uK = joule_to_microkelvin(total_potential([slm, vipa], pts_xy, time_s=t))
-        vipa_center_um = vipa.center_at(t) * 1e6
+        u_xy_uK = joule_to_microkelvin(total_potential([slm, ripa], pts_xy, time_s=t))
+        ripa_center_um = ripa.center_at(t) * 1e6
 
         fig, ax_xy = plt.subplots(figsize=(7.5, 4.5), constrained_layout=True)
         ax_xy.imshow(
@@ -590,9 +592,9 @@ def render_flyby_gif(
                 label="lost",
             )
         ax_xy.scatter(
-            [vipa_center_um[0]], [vipa_center_um[1]],
+            [ripa_center_um[0]], [ripa_center_um[1]],
             marker="x", s=60, c="cyan", linewidths=2.0,
-            label="VIPA center",
+            label="RIPA center",
         )
         ax_xy.set_xlabel(r"$x$ (µm)")
         ax_xy.set_ylabel(r"$y$ (µm)")
@@ -602,8 +604,8 @@ def render_flyby_gif(
         n_lost = int(np.sum(lost))
         ax_xy.set_title(
             f"t = {t * 1e3:7.4f} ms   "
-            f"VIPA at (x, y) = ({vipa_center_um[0]:+.2f}, "
-            f"{vipa_center_um[1]:+.2f}) µm   "
+            f"RIPA at (x, y) = ({ripa_center_um[0]:+.2f}, "
+            f"{ripa_center_um[1]:+.2f}) µm   "
             f"alive {n_surv}/{len(lost)},  lost {n_lost}"
         )
 
@@ -638,14 +640,14 @@ def print_setup_banner(grid_data: dict) -> None:
     speed_um_per_ms = 2.0 * FLYBY_HALF_LENGTH_UM / (DURATION_S * 1.0e3)
     shape = grid_data["shape"]
     spacing_um = grid_data["spacing_m"] * 1e6
-    print("Spectator-qubit fly-by with VIPA gridded trap")
+    print("Spectator-qubit fly-by with RIPA gridded trap")
     print(f"  SLM:  depth={SLM_DEPTH_UK:.1f} uK, "
           f"waists r={SLM_WAIST_RADIAL_UM} um / z={SLM_WAIST_AXIAL_UM} um")
-    print(f"  VIPA: tabulated potential from {VIPA_NPZ_PATH}")
+    print(f"  RIPA: tabulated potential from {RIPA_NPZ_PATH}")
     print(f"        grid shape {shape}, "
           f"spacing ({spacing_um[0]:.3f}, {spacing_um[1]:.3f}, {spacing_um[2]:.3f}) um, "
           f"interp=tricubic")
-    print(f"        nominal focal waist {VIPA_WAIST_UM} um")
+    print(f"        nominal focal waist {RIPA_WAIST_UM} um")
     print(f"  fly-by: x = -{FLYBY_HALF_LENGTH_UM:.1f} -> +{FLYBY_HALF_LENGTH_UM:.1f} um, "
           f"y = d, z = 0; speed = {speed_um_per_ms:.1f} um/ms")
     print(f"  initial T = {INITIAL_TEMPERATURE_UK:.1f} uK, "
@@ -664,7 +666,7 @@ _CACHE_FORMAT_VERSION = 2
 _REQUIRED_CACHE_KEYS = frozenset((
     "depths_uK", "distances_um", "speed_factors",
     "drag_out_per_speed", "loss_per_speed",
-    "vipa_capture_per_speed", "heating_uK_per_speed",
+    "ripa_capture_per_speed", "heating_uK_per_speed",
 ))
 
 
@@ -699,10 +701,10 @@ def _load_cache_or_none(cache_path: str) -> dict | None:
 
 
 def main() -> None:
-    grid_data = load_vipa_grid()
+    grid_data = load_ripa_grid()
     print_setup_banner(grid_data)
 
-    cache_path = os.path.join(RENDER_DIR, "spectator_qubits_vipa_sweep.npz")
+    cache_path = os.path.join(RENDER_DIR, "spectator_qubits_ripa_sweep.npz")
     sweep_results = _load_cache_or_none(cache_path)
     if sweep_results is None:
         sweep_results = sweep_grid(grid_data)
@@ -715,9 +717,9 @@ def main() -> None:
         print(f"Loaded cached sweep from {cache_path}  (delete to force re-run)")
 
     figures = {
-        "spectator_qubits_vipa_drag_lines": plot_drag_lines(sweep_results),
-        "spectator_qubits_vipa_heating_lines": plot_heating_lines(sweep_results),
-        "spectator_qubits_vipa_capture_lines": plot_capture_lines(sweep_results),
+        "spectator_qubits_ripa_drag_lines": plot_drag_lines(sweep_results),
+        "spectator_qubits_ripa_heating_lines": plot_heating_lines(sweep_results),
+        "spectator_qubits_ripa_capture_lines": plot_capture_lines(sweep_results),
     }
     for stem, (fig, _) in figures.items():
         for ext in ("png", "pdf"):
@@ -731,18 +733,18 @@ def main() -> None:
 
     print()
     print(
-        f"Rendering animation for VIPA={ANIM_DEPTH_UK:.0f} uK, "
+        f"Rendering animation for RIPA={ANIM_DEPTH_UK:.0f} uK, "
         f"d={ANIM_DISTANCE_UM} um ({ANIM_ENSEMBLE_SIZE} atoms)..."
     )
-    anim_result, anim_ramp, anim_slm, anim_vipa = run_flyby_with_trajectories(
+    anim_result, anim_ramp, anim_slm, anim_ripa = run_flyby_with_trajectories(
         grid_data, ANIM_DEPTH_UK, ANIM_DISTANCE_UM
     )
     gif_path = os.path.join(
         RENDER_DIR,
-        f"spectator_qubits_vipa_flyby_d{ANIM_DEPTH_UK:.0f}uK_"
+        f"spectator_qubits_ripa_flyby_d{ANIM_DEPTH_UK:.0f}uK_"
         f"y{ANIM_DISTANCE_UM:.2f}um.gif",
     )
-    render_flyby_gif(anim_result, anim_slm, anim_vipa, anim_ramp, gif_path)
+    render_flyby_gif(anim_result, anim_slm, anim_ripa, anim_ramp, gif_path)
 
 
 if __name__ == "__main__":

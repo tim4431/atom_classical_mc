@@ -13,7 +13,7 @@ Run from the repository root.
 - Tests: `python3 -m unittest tests.test_core` (or `python3 -m unittest discover tests`)
 - Single test: `python3 -m unittest tests.test_core.CorePhysicsTests.test_static_trap_has_low_numerical_heating`
 - SLM-to-AOD example: `python3 example/slm_to_aod_transfer.py` (add `--plot` / `--save-plot` for 2D figures, `--plot-3d` / `--save-3d-plot` for 3D, `--compare-position-ramps --save-comparison-plot ...` to sweep ramp shapes)
-- Other examples: `example/slm_to_slm_transfer.py`, `example/spectator_qubits.py`, `example/position_ramp_compare.py`, `example/gridded_vs_analytical.py`
+- Other examples: `example/slm_to_slm_transfer.py`, `example/spectator/spectator_qubits.py` (AOD fly-by), `example/spectator/spectator_qubits_ripa.py` (gridded RIPA fly-by), `example/spectator/ripa/generate_ripa_gridded_trap.py` (RIPA trap generator), `example/position_ramp_compare.py`, `example/gridded_vs_analytical.py`. See [example/spectator/README.md](example/spectator/README.md) for the spectator-qubit suite.
 - Install deps: `pip install -e .` (core: `numpy>=1.23`); for plotting `pip install -e ".[viz]"` (adds `matplotlib>=3.7`).
 
 There is no lint/format config. Python ≥3.9.

@@ -19,14 +19,14 @@ from __future__ import annotations
 import os
 import sys
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
 from src.simulation import SimulationConfig, run_simulation  # noqa: E402
 from src.units import um  # noqa: E402
 from src.visualization import render_animation  # noqa: E402
 
-from example.spectator_qubits import (  # noqa: E402
+from example.spectator.spectator_qubits import (  # noqa: E402
     AOD_WAIST_RADIAL_UM,
     DURATION_S,
     INITIAL_TEMPERATURE_UK,
@@ -41,7 +41,7 @@ from example.spectator_qubits import (  # noqa: E402
 )
 
 HERE = os.path.dirname(__file__)
-RENDER_DIR = os.path.join(HERE, "render")
+RENDER_DIR = os.path.join(HERE, "render_aod")
 os.makedirs(RENDER_DIR, exist_ok=True)
 
 CELLS = (

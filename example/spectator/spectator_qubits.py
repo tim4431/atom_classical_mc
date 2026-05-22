@@ -26,7 +26,7 @@ import sys
 
 import numpy as np
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
 from src.analysis import bound_to_trap  # noqa: E402
@@ -41,7 +41,7 @@ from src.trap import GaussianTrap  # noqa: E402
 from src.units import ms, um  # noqa: E402
 
 HERE = os.path.dirname(__file__)
-RENDER_DIR = os.path.join(HERE, "render")
+RENDER_DIR = os.path.join(HERE, "render_aod")
 os.makedirs(RENDER_DIR, exist_ok=True)
 
 SLM_WAIST_RADIAL_UM = 1.2

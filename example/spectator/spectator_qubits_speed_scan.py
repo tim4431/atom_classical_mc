@@ -16,13 +16,13 @@ import sys
 
 import numpy as np
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
 from src.constants import RB87_MASS_KG  # noqa: E402
 from src.units import microkelvin_to_joule  # noqa: E402
 
-from example.spectator_qubits import (  # noqa: E402
+from example.spectator.spectator_qubits import (  # noqa: E402
     AOD_WAIST_RADIAL_UM,
     DURATION_S,
     FLYBY_HALF_LENGTH_UM,
@@ -35,7 +35,7 @@ from example.spectator_qubits import (  # noqa: E402
 )
 
 HERE = os.path.dirname(__file__)
-RENDER_DIR = os.path.join(HERE, "render")
+RENDER_DIR = os.path.join(HERE, "render_aod")
 os.makedirs(RENDER_DIR, exist_ok=True)
 
 CELL_AOD_DEPTH_UK = 1000.0

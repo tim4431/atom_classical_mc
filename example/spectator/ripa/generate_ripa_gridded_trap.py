@@ -1,12 +1,13 @@
-"""Generate a 3D trap potential from the VIPA focal pattern and cache it as a
+"""Generate a 3D trap potential from the RIPA focal pattern and cache it as a
 tricubic ``GriddedTrap``.
 
 Pipeline:
 
-1. Build the VIPA rays (`vipa_lib.vipa_focus.vipa_rays`) from
+1. Build the RIPA rays (`ripa_lib.vipa_focus.vipa_rays`, vendored from the
+   VIPA simulation library) from
    ``PARAMS_10_TWZ``.
 2. For each z-slice in the z range, compute the focal-plane
-   intensity `|E(x,y,z)|^2` with `vipa_lib.crosssections.crosssection_xy`
+   intensity `|E(x,y,z)|^2` with `ripa_lib.crosssections.crosssection_xy`
    and resample (bilinear) onto `(x_axis, y_axis)`.
 3. Stack the slices into a `(Nx, Ny, Nz)` array, normalise so the peak
    intensity becomes the configured trap depth (red-detuned dipole trap:
@@ -18,7 +19,7 @@ Pipeline:
 
 Run from the repository root::
 
-    python3 example/vipa/generate_vipa_gridded_trap.py
+    python3 example/spectator/ripa/generate_ripa_gridded_trap.py
 """
 
 from __future__ import annotations
@@ -29,11 +30,11 @@ from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-ATOM_ROOT = HERE.parents[1]
+ATOM_ROOT = HERE.parents[2]
 # Put atom_classical_mc's repo root on the path first so that `from src.* ...`
 # resolves to *this* project, not the (also `src/`-shaped) vipa_focus_simulation
-# library that lives under lib/. The VIPA code we need was copied into
-# example/vipa/vipa_lib/ so it is importable by a non-clashing package name.
+# library that lives under lib/. The RIPA code we need was copied into
+# example/spectator/ripa/ripa_lib/ so it is importable by a non-clashing package name.
 if str(ATOM_ROOT) not in sys.path:
     sys.path.insert(0, str(ATOM_ROOT))
 if str(HERE) not in sys.path:
@@ -41,20 +42,20 @@ if str(HERE) not in sys.path:
 
 from src.trap import GriddedTrap  # noqa: E402
 from src.units import joule_to_microkelvin, microkelvin_to_joule  # noqa: E402
-from vipa_lib.crosssections import crosssection_xy  # noqa: E402
-from vipa_lib.vipa_focus import PARAMS_10_TWZ, vipa_rays  # noqa: E402
+from ripa_lib.crosssections import crosssection_xy  # noqa: E402
+from ripa_lib.vipa_focus import PARAMS_10_TWZ, vipa_rays  # noqa: E402
 
 PARAMS = PARAMS_10_TWZ
 PARAMS_NAME = "10_TWZ"
 
-# z range and grid count are not constrained by the VIPA params; set them here.
+# z range and grid count are not constrained by the RIPA params; set them here.
 # x/y range and counts are derived from PARAMS below.
 Z_RANGE_UM = 10
 NZ = 151
 
 DEPTH_UK = 500.0
 
-# Fitted bias of the focal minimum in the raw VIPA intensity (µm). Subtract
+# Fitted bias of the focal minimum in the raw RIPA intensity (µm). Subtract
 # from the grid axes so the trap center sits at (0, 0, 0) where the
 # simulator expects.
 CENTER_BIAS_X_UM = 0.060
@@ -63,14 +64,14 @@ CENTER_BIAS_Y_UM = -0.148
 # Zoom window (half-extent, µm) for the inset xOy view in plot_slices.
 ZOOM_HALF_EXTENT_UM = 1.0
 
-OUTPUT_NPZ = "vipa_gridded_trap.npz"
-OUTPUT_PLOT = "vipa_gridded_slices.png"
+OUTPUT_NPZ = "ripa_gridded_trap.npz"
+OUTPUT_PLOT = "ripa_gridded_slices.png"
 
 
 def xy_axes_from_params(params: dict) -> tuple[np.ndarray, np.ndarray]:
-    """Build the focal-plane (x, y) axes from a VIPA params dict.
+    """Build the focal-plane (x, y) axes from a RIPA params dict.
 
-    Range comes from ``extent_f`` (the focal-plane half-extent the VIPA
+    Range comes from ``extent_f`` (the focal-plane half-extent the RIPA
     crosssection already crops to). Grid spacing matches the native Fourier
     spacing ``lambda * f / D`` produced by ``calc_field_after_lens`` on an
     aperture of size ``D``, so the resampling onto our axes is at the
@@ -131,7 +132,7 @@ def compute_intensity_grid(
     y_axis: np.ndarray,
     z_axis: np.ndarray,
 ) -> np.ndarray:
-    """Compute `I(x, y, z)` on the user grid by VIPA per-z xy slices."""
+    """Compute `I(x, y, z)` on the user grid by RIPA per-z xy slices."""
 
     rays = vipa_rays(params)
     params_local = dict(params)
@@ -288,7 +289,7 @@ def main() -> None:
     y_range_um = float(y_axis[-1]) * 1e6
 
     print(
-        f"VIPA PARAMS_{PARAMS_NAME}.   "
+        f"RIPA PARAMS_{PARAMS_NAME}.   "
         f"Grid ({nx},{ny},{NZ}) over "
         f"x=±{x_range_um:.2f} um, y=±{y_range_um:.2f} um, "
         f"z=±{Z_RANGE_UM:.2f} um.\n"
@@ -299,12 +300,12 @@ def main() -> None:
     peak_intensity = float(np.max(intensity))
     if peak_intensity <= 0.0:
         raise RuntimeError(
-            "VIPA intensity grid peak is zero. Try a smaller z range or a "
+            "RIPA intensity grid peak is zero. Try a smaller z range or a "
             "different parameter set so the focal volume falls inside the box."
         )
 
     # Re-center: the focal minimum sits at (CENTER_BIAS_X, CENTER_BIAS_Y) in the
-    # VIPA frame. Shift the axes (data unchanged) so that point maps to (0, 0).
+    # RIPA frame. Shift the axes (data unchanged) so that point maps to (0, 0).
     x_axis = x_axis - CENTER_BIAS_X_UM * 1e-6
     y_axis = y_axis - CENTER_BIAS_Y_UM * 1e-6
     print(
@@ -330,7 +331,7 @@ def main() -> None:
     print(f"Saved grid to {out_npz}")
 
     trap = build_trap_from_grid(
-        potential_j, x_axis, y_axis, z_axis, name=f"vipa_{PARAMS_NAME}"
+        potential_j, x_axis, y_axis, z_axis, name=f"ripa_{PARAMS_NAME}"
     )
     u_origin_uK = float(
         joule_to_microkelvin(trap.potential(np.array([0.0, 0.0, 0.0])))
