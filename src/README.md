@@ -15,6 +15,13 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `mean_kinetic_energy_time_series_uK`: Compute mean kinetic energy versus stored trajectory time.
 - `snapshot_moving_trap`: Return a static `GaussianTrap` snapshot of a `MovingGaussianTrap` at one time.
 
+## `fields.py`
+
+- `MagneticFieldConfig`: Abstract base for any time-dependent magnetic field `B(r, t)` in tesla.
+- `UniformMagneticField`: Spatially uniform bias field.
+- `QuadrupoleMagneticField`: Linear anti-Helmholtz quadrupole `B = b'(x, y, -2z)` about an arbitrary axis.
+- `total_magnetic_field`: Linear sum of field evaluations at a chosen time.
+
 ## `harmonic.py`
 
 - `HarmonicApproximation.frequencies_hz`: Return harmonic normal-mode frequencies in hertz.
@@ -28,6 +35,30 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `decompose_motion_into_harmonic_modes`: Project atom phase-space coordinates into harmonic normal modes.
 - `coherent_fock_probabilities`: Compute coherent-state Fock probabilities from mean occupations.
 - `summarize_mode_occupations`: Summarize per-mode occupation distributions with mean, median, and standard deviation.
+
+## `internal_state.py`
+
+- `ScatteringEvents`: Per-step photon counts (absorbed / stimulated per beam, spontaneous per atom).
+- `InternalStateModel`: Abstract internal-state backend consuming the stimulated rate matrix `W`.
+- `AdiabaticSteadyState`: Populations locked to the local steady state; Poisson photon numbers.
+- `RateEquationPopulations`: Two-level excited population integrated exactly per step (handles transients).
+- `StochasticJumpState`: Discrete ground/excited kinetic-MC trajectory (quantum-jump analog, needs `dt << 1/Gamma`).
+- `sample_recoil_velocity_kicks`: Convert photon events into per-atom recoil velocity kicks (exact per-photon spontaneous directions).
+
+## `laser.py`
+
+- `LaserBeam`: Collimated traveling-wave beam: direction, detuning, saturation `s0`, helicity, optional Gaussian waist.
+- `LaserBeam.saturation_at`: Local saturation parameter with the transverse Gaussian profile applied.
+- `six_beam_mot`: Build the standard three-axis retro-reflected MOT beam set with correct helicities.
+
+## `mot.py`
+
+- `MOTSystem`: Species + beams + magnetic fields; reduces geometry to per-atom, per-beam stimulated rates.
+- `MOTSystem.stimulated_rates`: One-way stimulated rate matrix `W(r, v, t)` with Doppler, Zeeman, and polarization decomposition.
+- `MOTSystem.mean_radiation_force`: Deterministic steady-state radiation-pressure force (for analysis/tests).
+- `MOTSimulationConfig`: Configuration for the coupled internal-state + motion Monte Carlo run.
+- `MOTSimulationResult`: Survival, temperatures, photon counts, and optional trajectory time series.
+- `run_mot_simulation`: Operator-split loop: rate evaluation, internal-state backend step, recoil + trap-force momentum update.
 
 ## `ramp.py`
 
@@ -56,6 +87,12 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `SimulationResult.temperature_gain_uK_at`: Method returning temperature gain for survivors or the full ensemble.
 - `run_simulation`: Run velocity-Verlet propagation. Accepts either `(traps, config)` or the legacy `(static_trap, moving_trap_base, ramp, config)` form.
 
+## `species.py`
+
+- `AtomSpecies`: Mass plus effective two-level cycling-transition data (wavelength, linewidth, `I_sat`, g-factors).
+- `AtomSpecies.wavenumber_rad_per_m` / `recoil_velocity_m_per_s` / `mu_eff_j_per_t` / `doppler_temperature_uK`: Derived transition scales.
+- `RB85_D2`, `RB87_D2`: Preset D2 cycling transitions (Steck data).
+
 ## `trap.py`
 
 - `TrapConfig`: Abstract base for any time-dependent trap potential `U(r, t)`.
@@ -79,6 +116,8 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `joule_to_microkelvin`: Convert joules to the equivalent temperature-like scale in microkelvin.
 - `um`: Convert micrometers to meters.
 - `ms`: Convert milliseconds to seconds.
+- `mhz`: Convert megahertz to hertz.
+- `gauss` / `gauss_per_cm`: Convert gauss (per cm) to tesla (per m).
 
 ## `visualization.py`
 

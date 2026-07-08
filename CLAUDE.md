@@ -4,16 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Classical Monte Carlo simulator for Rb87 atom heating and loss when a moving AOD optical tweezer pulls an atom out of a static SLM trap. Pure NumPy; Matplotlib is optional. See `doc/plan.md` for the physics model and intended public API; `src/README.md` is a one-line index of every function in the package.
+Classical Monte Carlo simulator for Rb87 atom heating and loss when a moving AOD optical tweezer pulls an atom out of a static SLM trap, plus a magneto-optical trap (MOT) extension with internal-state dynamics and photon recoil for Rb85/Rb87. Pure NumPy; Matplotlib is optional. See `doc/plan.md` for the tweezer physics model and `doc/mot_plan.md` for the MOT model; `src/README.md` is a one-line index of every function in the package.
 
 ## Commands
 
 Run from the repository root.
 
-- Tests: `python3 -m unittest tests.test_core` (or `python3 -m unittest discover tests`)
+- Tests: `python3 -m unittest tests.test_core` and `python3 -m unittest tests.test_mot` (or `python3 -m unittest discover tests`; the MOT module takes ~1 min — it runs real cooling simulations)
 - Single test: `python3 -m unittest tests.test_core.CorePhysicsTests.test_static_trap_has_low_numerical_heating`
 - SLM-to-AOD example: `python3 example/slm_to_aod_transfer.py` (add `--plot` / `--save-plot` for 2D figures, `--plot-3d` / `--save-3d-plot` for 3D, `--compare-position-ramps --save-comparison-plot ...` to sweep ramp shapes)
 - Other examples: `example/slm_to_slm_transfer.py`, `example/spectator/spectator_qubits.py` (AOD fly-by), `example/spectator/spectator_qubits_ripa.py` (gridded RIPA fly-by), `example/spectator/ripa/generate_ripa_gridded_trap.py` (RIPA trap generator), `example/position_ramp_compare.py`, `example/gridded_vs_analytical.py`. See [example/spectator/README.md](example/spectator/README.md) for the spectator-qubit suite.
+- MOT example: `python3 example/mot/rb85_mot.py` (Rb85 capture + cooling; `--backend rate-equation` to switch internal-state backends, `--plot` / `--save-plot` for figures)
 - Install deps: `pip install -e .` (core: `numpy>=1.23`); for plotting `pip install -e ".[viz]"` (adds `matplotlib>=3.7`).
 
 There is no lint/format config. Python ≥3.9.
@@ -33,12 +34,23 @@ A single-pass pipeline driven by `run_simulation` in [src/simulation.py](src/sim
 5. **Reporting** — `SimulationResult` carries survival/loss, energy-gain stats, kinetic temperature, full final state, and (if `store_trajectories=True`) sampled `(positions, velocities, lost)` snapshots at `trajectory_stride` intervals. Temperatures come in two flavors: `*_survivors` (over atoms not flagged lost) and `*_all` (whole ensemble); use `result.temperature_gain_uK_at(survivors_only=True|False)` to pick. The legacy properties `final_temperature_uK` and `temperature_gain_uK` keep the survivors-only meaning.
 6. **Post-processing** — [src/analysis.py](src/analysis.py) computes single-trap binding (`bound_to_trap`, `capture_probability`) at any time `t` (defaults to `result.duration_s` for moving traps), the SLM-vs-AOD-vs-ambiguous breakdown (`classify_final_trap_occupation`), and time series from stored trajectories. [src/harmonic.py](src/harmonic.py) builds a quadratic Taylor expansion (analytic from `TrapConfig`s at a chosen `time_s`, or finite-difference from any callable), diagonalizes `K/m` to get normal modes, and decomposes phase-space coordinates into per-mode classical energies and coherent-state occupations `n̄ = E/(ℏω)` (a semi-classical proxy — a classical trajectory is not a quantum eigenstate).
 
+## MOT / light-force extension
+
+A second, parallel pipeline driven by `run_mot_simulation` in [src/mot.py](src/mot.py), coupling two "physics backends" by operator splitting each timestep (see `doc/mot_plan.md` for the full model):
+
+1. **Field geometry** — `MOTSystem` ([src/mot.py](src/mot.py)) bundles an `AtomSpecies` ([src/species.py](src/species.py), presets `RB85_D2` / `RB87_D2`), `LaserBeam`s ([src/laser.py](src/laser.py), `six_beam_mot` builder), and `MagneticFieldConfig`s ([src/fields.py](src/fields.py), uniform + quadrupole). Its `stimulated_rates` reduces all geometry (Gaussian beam profiles, Doppler shift, Zeeman shift with sigma+/pi/sigma- polarization decomposition along the local B axis) to a per-atom, per-beam one-way stimulated rate matrix `W` — the only thing the internal-state backend sees.
+2. **Internal-state backend** — `InternalStateModel` ([src/internal_state.py](src/internal_state.py)) evolves the effective two-level populations and reports per-step photon `ScatteringEvents`. Three implementations: `AdiabaticSteadyState` (default, populations at local steady state, Poisson photon counts), `RateEquationPopulations` (exact exponential ODE update, handles pulsed beams, unconditionally stable), `StochasticJumpState` (discrete kinetic-MC trajectory, requires `(Gamma + W_tot) dt < 0.1`). The state array is opaque to the driver — richer (multilevel/MCWF) backends can be added without touching the loop.
+3. **Momentum backend** — the `run_mot_simulation` loop applies recoil velocity kicks (`+hbar k` per absorption along the beam, `-hbar k` per stimulated emission, isotropic random `hbar k` per spontaneous photon, sampled photon-by-photon) plus optional conservative `TrapConfig` forces, via semi-implicit Euler (velocity-Verlet is not meaningful for stochastic, velocity-dependent forces).
+
+Key limitations (documented in `doc/mot_plan.md`): beams are mutually incoherent, so no sub-Doppler cooling; effective two-level cycling transition only (perfect repumper assumed); loss is geometric only (`loss_radius_m`) since radiation pressure is non-conservative — never apply the energy-based loss criterion to MOT runs.
+
 ## Unit conventions
 
 The simulator is internally SI (m, s, kg, J), but inputs and human-readable outputs use:
 
 - **Trap depth**: microkelvin (`depth_uK`). Convert with `units.microkelvin_to_joule` / `joule_to_microkelvin` (or via `TrapConfig.depth_joule`).
-- **Lengths**: meters in API, but the `units.um(...)` and `units.ms(...)` helpers exist so example/test code can write `um(1.2)` for a waist or `ms(0.5)` for a duration.
+- **Lengths**: meters in API, but the `units.um(...)` and `units.ms(...)` helpers exist so example/test code can write `um(1.2)` for a waist or `ms(0.5)` for a duration. For MOT inputs there are also `units.mhz(...)`, `units.gauss(...)`, and `units.gauss_per_cm(...)`.
+- **Magnetic fields**: tesla (`_T`, `_T_per_m`). **Frequencies**: linear hertz for laser detunings (`detuning_hz`, negative = red), angular rad/s for linewidths and internal rates (`_rad_s`, `_per_s` suffixes).
 - **Energies in results**: microkelvin (`*_uK` suffix). Time series come back in joules only inside `harmonic.py` hot paths.
 
 Any new field that carries a physical quantity should follow the `_m` / `_s` / `_kg` / `_uK` / `_j_per_m2` suffix scheme already used everywhere — search `_per_s2` etc. before inventing a new name.
@@ -51,6 +63,6 @@ Any new field that carries a physical quantity should follow the `_m` / `_s` / `
 
 `AstigmaticAODTrap` reproduces the v2 model where AOD lateral motion shifts the axial focus per axis: `z01 = dxdt2z * vx`, `z02 = dxdt2z * vy`. `dxdt2z = f0 / V_sound` is the AOD acoustic constant. Setting `dxdt2z = 0` collapses to the diffraction Gaussian-beam profile (still time-dependent through the ramp). The trap velocity comes from `ramp.velocity_at(t)`, so it depends on the ramp's `position_profile` — `LINEAR` ramps give piecewise-constant velocity (and hence step changes in focal shift at every waypoint), so prefer a smooth profile (e.g. `QUINTIC_MIN_JERK`) when running with `dxdt2z != 0`.
 
-## Out of scope (v1)
+## Out of scope
 
-Per `doc/plan.md`: no photon recoil, tunneling, background-gas collisions, technical noise, cooling/damping, optical-power-to-depth conversion, or CLI. If a request implies one of these, surface the gap rather than inventing a model.
+For the tweezer pipeline (`run_simulation`, per `doc/plan.md`): no photon recoil, tunneling, background-gas collisions, technical noise, cooling/damping, optical-power-to-depth conversion, or CLI. Photon recoil and cooling **are** modeled by the MOT pipeline (`run_mot_simulation`), but there the exclusions are: sub-Doppler mechanisms, multilevel/dark-state structure, dipole force of the cooling light, atom-atom effects (see `doc/mot_plan.md`). If a request implies one of these, surface the gap rather than inventing a model.

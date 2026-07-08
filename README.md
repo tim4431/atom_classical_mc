@@ -32,6 +32,22 @@ By default, the simulator rejects and resamples atoms that are already unbound
 in the initial trap, so reported loss is conditioned on successful initial
 loading.
 
+## Magneto-optical trap (MOT) simulation
+
+The `src/mot.py` pipeline couples an internal-state backend (steady-state,
+rate-equation, or stochastic-jump populations of the effective two-level
+cycling transition) with a momentum backend (per-photon recoil kicks plus
+optional conservative traps). Magnetic fields, laser beams, and species
+data (Rb85/Rb87 D2) are configurable; see `doc/mot_plan.md` for the model.
+
+Run the Rb85 MOT capture-and-cooling example with:
+
+```bash
+python3 example/mot/rb85_mot.py --save-plot
+```
+
+![rb85 mot summary](example/mot/rb85_mot_summary.png)
+
 Compare AOD position ramp profiles with:
 
 ```bash
