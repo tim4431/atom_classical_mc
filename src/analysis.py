@@ -195,6 +195,43 @@ def mean_kinetic_energy_time_series_uK(
     return means
 
 
+def kinetic_temperature_time_series_uK(
+    result: SimulationResult,
+    mass_kg: float = RB87_MASS_KG,
+    survivors_only: bool = True,
+    subtract_drift: bool = True,
+) -> NDArray[np.float64]:
+    """Return kinetic temperature `m <v^2> / (3 k_B)` versus stored time.
+
+    With `subtract_drift=True` the per-snapshot ensemble mean velocity is
+    removed first, so a cloud in free flight or being pushed by radiation
+    pressure reports its thermal spread rather than its bulk motion.
+    """
+
+    if result.trajectory_velocities_m_per_s is None:
+        raise ValueError("Simulation was run without stored trajectories.")
+    if survivors_only and result.trajectory_lost is None:
+        raise ValueError(
+            "Trajectory lost masks are required for survivor-only analysis."
+        )
+
+    velocities = result.trajectory_velocities_m_per_s
+    temperatures = np.full(velocities.shape[0], np.nan, dtype=float)
+    for index in range(velocities.shape[0]):
+        sample = velocities[index]
+        if survivors_only:
+            sample = sample[~result.trajectory_lost[index]]
+        if sample.size == 0:
+            continue
+        if subtract_drift:
+            sample = sample - np.mean(sample, axis=0)
+        mean_speed_sq = float(np.mean(np.sum(sample * sample, axis=-1)))
+        temperatures[index] = float(
+            joule_to_microkelvin(mass_kg * mean_speed_sq / 3.0)
+        )
+    return temperatures
+
+
 def snapshot_moving_trap(
     trap: TrapConfig, time_s: float
 ) -> TrapConfig:

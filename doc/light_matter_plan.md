@@ -1,40 +1,45 @@
-# MOT / light-force extension: physics model and design
+# Light-matter extension: physics model and design
 
-This document specifies the magneto-optical trap (MOT) extension added on
+This document specifies the near-resonant light-force extension added on
 top of the conservative-trap simulator described in `plan.md`. It covers
-Rb85/Rb87 (any effective two-level cycling transition), quadrupole + bias
-magnetic fields, an arbitrary set of cooling beams, internal-state
-dynamics, and photon-recoil momentum diffusion.
+any configuration of laser beams and magnetic fields acting on an
+effective two-level atom (Rb85/Rb87 D2 presets provided): MOTs, optical
+molasses, probe/imaging beams, push beams, and resonant light layered on
+top of conservative dipole traps — a MOT is just one beam/field
+configuration, not a special case in the code.
 
 ## Multiphysics architecture
 
 The problem factors into two coupled solvers advanced by operator
-splitting each timestep, in the spirit of COMSOL physics modules:
+splitting inside the standard `run_simulation` driver, in the spirit of
+COMSOL physics modules:
 
 ```
-            geometry reduction                     backend 1
-  r, v, t ──> MOTSystem.stimulated_rates ──> W (N x n_beams) ──> InternalStateModel.step
-              (B field, Doppler, Zeeman,                          │
-               polarization decomposition)                        ▼
-                                                        ScatteringEvents (photons)
-            backend 2                                             │
-  r, v <── semi-implicit Euler <── recoil kicks + trap force <────┘
+            geometry reduction                       backend 1
+  r, v, t ──> LightMatterSystem.stimulated_rates ──> W (N x n_beams) ──> InternalStateModel.step
+              (B field, Doppler, Zeeman,                                  │
+               polarization decomposition)                                ▼
+                                                          ScatteringEvents (photons)
+            backend 2                                                     │
+  r, v <── velocity-Verlet (traps) + recoil impulses <────────────────────┘
 ```
 
-- **`MOTSystem`** (`src/mot.py`) owns the *field geometry*: an
-  `AtomSpecies`, `LaserBeam`s, and `MagneticFieldConfig`s. Its single
-  job is to reduce everything to the per-atom, per-beam one-way
-  stimulated rate matrix `W` (s^-1).
+- **`LightMatterSystem`** (`src/light_matter.py`) owns the *field
+  geometry*: an `AtomSpecies`, `LaserBeam`s, and `MagneticFieldConfig`s.
+  Its single job is to reduce everything to the per-atom, per-beam
+  one-way stimulated rate matrix `W` (s^-1).
 - **`InternalStateModel`** (`src/internal_state.py`) owns the *internal
   state*: it consumes `W`, evolves populations, and reports the photon
   `ScatteringEvents` of the step. The state array is opaque to the
   driver, so richer backends (multilevel rate equations, density
   matrix / MCWF) can be added without touching the loop.
-- **The momentum backend** (`run_mot_simulation` loop) applies recoil
-  velocity kicks derived from the events plus any conservative
-  `TrapConfig` force, then drifts positions (semi-implicit Euler; the
-  velocity-Verlet integrator of `run_simulation` is not meaningful for
-  stochastic, velocity-dependent forces).
+- **The momentum update** lives in `run_simulation`
+  (`src/simulation.py`): recoil velocity impulses derived from the
+  events are applied at the start of each velocity-Verlet step, on top
+  of the conservative `TrapConfig` forces. Attach the light physics via
+  `run_simulation(traps, config, scattering=system, internal_model=...)`;
+  `traps` may be empty for pure light-force runs (then
+  `config.initial_cloud_sigma_m` must define the initial cloud).
 
 ## Rate model
 
@@ -73,7 +78,7 @@ the standard saturated `hbar k W_b (1 - 2p)`.
 
 | backend | state | events | dt requirement | use case |
 |---|---|---|---|---|
-| `AdiabaticSteadyState` | none (populations follow local steady state) | Poisson | rates ~constant over dt | default; CW MOT/molasses |
+| `AdiabaticSteadyState` | none (populations follow local steady state) | Poisson | rates ~constant over dt | default; CW light |
 | `RateEquationPopulations` | excited population `p` per atom, exact exponential update | Poisson at time-averaged `p` | none (unconditionally stable) | pulsed/switched beams |
 | `StochasticJumpState` | discrete ground/excited, kinetic-MC jumps | exact 0/1 per step | `(Gamma + W_tot) dt < 0.1` | per-trajectory photon statistics |
 
@@ -91,11 +96,15 @@ net momentum), and every spontaneous photon `hbar k` in an isotropically
 random direction, sampled photon-by-photon (no Gaussian approximation).
 Dipole emission patterns are a possible refinement.
 
-## Loss criterion
+## Loss criterion and energy bookkeeping
 
-Radiation pressure is non-conservative, so the energy-based loss flag of
-`run_simulation` is meaningless here. `run_mot_simulation` only supports
-geometric loss (`loss_radius_m`).
+Radiation pressure is non-conservative, so attaching `scattering`
+automatically disables the energy-based loss flag of `run_simulation`
+(only `loss_radius_m` applies). The energy fields of `SimulationResult`
+still measure the conservative mechanical energy (kinetic + trap
+potential), so recoil heating shows up as energy gain; recover
+trap-survival statistics post-hoc with `analysis.bound_to_trap` /
+`capture_probability` (see `example/tweezer_probe_heating.py`).
 
 ## Explicitly out of scope
 
@@ -106,15 +115,16 @@ geometric loss (`loss_radius_m`).
 - Multilevel structure beyond the effective two-level cycling
   transition: no hyperfine dark states, no repumper depletion dynamics
   (a repumper is assumed perfect).
-- Dipole force of the cooling light (radiation pressure only; conservative
-  dipole traps can still be layered via `TrapConfig`).
+- Dipole force of the near-resonant light (radiation pressure only;
+  conservative dipole traps are layered via `TrapConfig`).
 - Atom-atom effects: reabsorption/radiation trapping, light-assisted
   collisions, density limits.
 - Magnetic (Stern-Gerlach) force on the ground state; fine for MOT-scale
   gradients over ms timescales.
 
-Validation targets (covered in `tests/test_mot.py`): two-level resonant
-rates, Doppler and Zeeman resonance shifts, molasses damping sign, MOT
-restoring force sign, steady-state populations across all three
-backends, photon-budget balance, cooling of a hot cloud to the
-Doppler-scale equilibrium, and MOT cloud compression.
+Validation targets (covered in `tests/test_light_matter.py`): two-level
+resonant rates, Doppler and Zeeman resonance shifts, molasses damping
+sign, MOT restoring force sign, steady-state populations across all
+three backends, photon-budget balance, cooling of a hot cloud to the
+Doppler-scale equilibrium, MOT cloud compression, and recoil heating of
+a tweezer-trapped atom under a resonant probe.

@@ -7,6 +7,7 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
+from src.analysis import kinetic_temperature_time_series_uK  # noqa: E402
 from src.constants import (  # noqa: E402
     BOHR_MAGNETON_J_PER_T,
     HBAR_J_S,
@@ -24,21 +25,21 @@ from src.internal_state import (  # noqa: E402
     sample_recoil_velocity_kicks,
 )
 from src.laser import LaserBeam, six_beam_mot  # noqa: E402
-from src.mot import (  # noqa: E402
-    MOTSimulationConfig,
-    MOTSystem,
-    _polarization_fractions,
-    run_mot_simulation,
+from src.light_matter import (  # noqa: E402
+    LightMatterSystem,
+    polarization_fractions,
 )
+from src.simulation import SimulationConfig, run_simulation  # noqa: E402
 from src.species import RB85_D2, RB87_D2  # noqa: E402
-from src.units import gauss_per_cm, mhz  # noqa: E402
+from src.trap import GaussianTrap  # noqa: E402
+from src.units import gauss_per_cm, um  # noqa: E402
 
 
 def _molasses_system(species=RB85_D2, detuning_hz=None, saturation=2.0):
     if detuning_hz is None:
         detuning_hz = -0.5 * species.linewidth_rad_s / (2.0 * np.pi)
     beams = six_beam_mot(detuning_hz=detuning_hz, saturation=saturation)
-    return MOTSystem(species=species, beams=beams)
+    return LightMatterSystem(species=species, beams=beams)
 
 
 def _mot_system(species=RB85_D2, gradient_g_per_cm=10.0, saturation=2.0):
@@ -47,7 +48,7 @@ def _mot_system(species=RB85_D2, gradient_g_per_cm=10.0, saturation=2.0):
     quad = QuadrupoleMagneticField(
         gradient_T_per_m=float(gauss_per_cm(gradient_g_per_cm))
     )
-    return MOTSystem(species=species, beams=beams, magnetic_fields=[quad])
+    return LightMatterSystem(species=species, beams=beams, magnetic_fields=[quad])
 
 
 class SpeciesTests(unittest.TestCase):
@@ -120,18 +121,18 @@ class PolarizationTests(unittest.TestCase):
     def test_fractions_sum_to_one(self):
         cos_theta = np.linspace(-1.0, 1.0, 21)
         for helicity in (-1.0, -0.3, 0.0, 0.7, 1.0):
-            f_plus, f_pi, f_minus = _polarization_fractions(helicity, cos_theta)
+            f_plus, f_pi, f_minus = polarization_fractions(helicity, cos_theta)
             np.testing.assert_allclose(f_plus + f_pi + f_minus, 1.0, atol=1e-12)
             self.assertTrue(np.all(f_plus >= 0.0))
             self.assertTrue(np.all(f_pi >= 0.0))
             self.assertTrue(np.all(f_minus >= 0.0))
 
     def test_pure_sigma_plus_along_field(self):
-        f_plus, f_pi, f_minus = _polarization_fractions(1.0, np.array([1.0]))
+        f_plus, f_pi, f_minus = polarization_fractions(1.0, np.array([1.0]))
         np.testing.assert_allclose([f_plus[0], f_pi[0], f_minus[0]], [1.0, 0.0, 0.0])
 
     def test_helicity_flips_when_counterpropagating(self):
-        f_plus, _, f_minus = _polarization_fractions(1.0, np.array([-1.0]))
+        f_plus, _, f_minus = polarization_fractions(1.0, np.array([-1.0]))
         np.testing.assert_allclose([f_plus[0], f_minus[0]], [0.0, 1.0])
 
 
@@ -139,7 +140,7 @@ class RateEngineTests(unittest.TestCase):
     def test_resonant_rate_matches_two_level_formula(self):
         species = RB85_D2
         beam = LaserBeam(direction=(0.0, 0.0, 1.0), detuning_hz=0.0, saturation=1.0)
-        system = MOTSystem(species=species, beams=[beam])
+        system = LightMatterSystem(species=species, beams=[beam])
         w = system.stimulated_rates(np.zeros((1, 3)), np.zeros((1, 3)))
         # W = Gamma/2 * s on resonance with B = 0.
         self.assertAlmostEqual(float(w[0, 0]), 0.5 * species.linewidth_rad_s, delta=1.0)
@@ -149,7 +150,7 @@ class RateEngineTests(unittest.TestCase):
         gamma = species.linewidth_rad_s
         detuning_hz = -gamma / (2.0 * np.pi)  # one linewidth red
         beam = LaserBeam(direction=(0.0, 0.0, 1.0), detuning_hz=detuning_hz, saturation=1.0)
-        system = MOTSystem(species=species, beams=[beam])
+        system = LightMatterSystem(species=species, beams=[beam])
         # Atom moving against the beam is Doppler-shifted toward resonance.
         v_resonant = -gamma / species.wavenumber_rad_per_m
         w_moving = system.stimulated_rates(
@@ -172,12 +173,12 @@ class RateEngineTests(unittest.TestCase):
             helicity=-1.0,
         )
         b_resonant = gamma * HBAR_J_S / species.mu_eff_j_per_t
-        system_b = MOTSystem(
+        system_b = LightMatterSystem(
             species=species,
             beams=[beam],
             magnetic_fields=[UniformMagneticField(field_T=(0.0, 0.0, b_resonant))],
         )
-        system_0 = MOTSystem(species=species, beams=[beam])
+        system_0 = LightMatterSystem(species=species, beams=[beam])
         w_b = system_b.stimulated_rates(np.zeros((1, 3)), np.zeros((1, 3)))
         w_0 = system_0.stimulated_rates(np.zeros((1, 3)), np.zeros((1, 3)))
         self.assertGreater(float(w_b[0, 0]), float(w_0[0, 0]))
@@ -324,39 +325,41 @@ class RecoilTests(unittest.TestCase):
         self.assertLess(float(np.linalg.norm(mean_kick)), 3.0 * v_rec / np.sqrt(n_atoms) * 3)
 
 
-class MOTSimulationTests(unittest.TestCase):
+class ScatteringSimulationTests(unittest.TestCase):
     def test_molasses_cools_hot_cloud_toward_doppler_scale(self):
         system = _molasses_system(saturation=1.0)
-        config = MOTSimulationConfig(
+        config = SimulationConfig(
             initial_temperature_uK=2000.0,
             timestep_s=2.0e-7,
             duration_s=6.0e-3,
             ensemble_size=200,
+            mass_kg=RB85_D2.mass_kg,
             initial_cloud_sigma_m=1.0e-4,
             random_seed=7,
         )
-        result = run_mot_simulation(system, config)
+        result = run_simulation([], config, scattering=system)
         self.assertLess(
             result.final_temperature_uK_all, 0.3 * result.initial_temperature_uK_all
         )
         # Should approach the Doppler scale but not go below the recoil scale.
         self.assertLess(result.final_temperature_uK_all, 800.0)
         self.assertGreater(result.final_temperature_uK_all, 10.0)
-        self.assertGreater(result.mean_scattered_photons, 100.0)
+        self.assertGreater(float(np.mean(result.scattered_photons)), 100.0)
 
     def test_mot_confines_cloud(self):
         system = _mot_system(gradient_g_per_cm=15.0, saturation=2.0)
-        config = MOTSimulationConfig(
+        config = SimulationConfig(
             initial_temperature_uK=500.0,
             timestep_s=2.0e-7,
             duration_s=10.0e-3,
             ensemble_size=100,
+            mass_kg=RB85_D2.mass_kg,
             initial_cloud_sigma_m=0.5e-3,
             random_seed=11,
             store_trajectories=True,
             trajectory_stride=500,
         )
-        result = run_mot_simulation(system, config)
+        result = run_simulation([], config, scattering=system)
         initial_rms = float(
             np.sqrt(np.mean(np.sum(result.initial_positions_m**2, axis=-1)))
         )
@@ -365,37 +368,44 @@ class MOTSimulationTests(unittest.TestCase):
         )
         self.assertLess(final_rms, initial_rms)
         self.assertEqual(result.survival_probability, 1.0)
-        self.assertIsNotNone(result.trajectory_temperature_uK)
+        temperatures = kinetic_temperature_time_series_uK(
+            result, mass_kg=RB85_D2.mass_kg
+        )
+        self.assertEqual(temperatures.shape, result.trajectory_times_s.shape)
+        self.assertLess(temperatures[-1], temperatures[0])
 
     def test_hot_atoms_without_light_fly_away(self):
-        # Sanity check the loss criterion: no beams cannot be built, so
-        # use a far-detuned dark system (negligible scattering).
+        # Sanity check the loss criterion with a far-detuned dark system
+        # (negligible scattering): free flight out of the loss radius.
         system = _molasses_system(detuning_hz=-5.0e9, saturation=1.0e-6)
-        config = MOTSimulationConfig(
+        config = SimulationConfig(
             initial_temperature_uK=1000.0,
             timestep_s=1.0e-6,
             duration_s=5.0e-3,
             ensemble_size=50,
+            mass_kg=RB85_D2.mass_kg,
             initial_cloud_sigma_m=1.0e-5,
             loss_radius_m=1.0e-3,
             random_seed=3,
         )
-        result = run_mot_simulation(system, config)
+        result = run_simulation([], config, scattering=system)
         self.assertGreater(result.loss_fraction, 0.5)
-        self.assertLess(result.mean_scattered_photons, 1.0)
+        self.assertLess(float(np.mean(result.scattered_photons)), 1.0)
 
     def test_stochastic_backend_runs_and_cools(self):
         # dt must satisfy (Gamma + W_tot) dt < 0.1 for the jump backend.
         system = _molasses_system(saturation=0.5)
-        config = MOTSimulationConfig(
+        config = SimulationConfig(
             initial_temperature_uK=2000.0,
             timestep_s=1.2e-9,
             duration_s=0.1e-3,
             ensemble_size=40,
+            mass_kg=RB85_D2.mass_kg,
+            initial_cloud_sigma_m=1.0e-4,
             random_seed=5,
         )
-        result = run_mot_simulation(
-            system, config, internal_model=StochasticJumpState()
+        result = run_simulation(
+            [], config, scattering=system, internal_model=StochasticJumpState()
         )
         self.assertLess(
             result.final_temperature_uK_all, result.initial_temperature_uK_all
@@ -410,14 +420,20 @@ class MOTSimulationTests(unittest.TestCase):
             timestep_s=2.0e-7,
             duration_s=4.0e-3,
             ensemble_size=150,
+            mass_kg=RB85_D2.mass_kg,
+            initial_cloud_sigma_m=1.0e-4,
             random_seed=13,
         )
-        result_a = run_mot_simulation(
-            system, MOTSimulationConfig(**base), internal_model=AdiabaticSteadyState()
+        result_a = run_simulation(
+            [],
+            SimulationConfig(**base),
+            scattering=system,
+            internal_model=AdiabaticSteadyState(),
         )
-        result_b = run_mot_simulation(
-            system,
-            MOTSimulationConfig(**base),
+        result_b = run_simulation(
+            [],
+            SimulationConfig(**base),
+            scattering=system,
             internal_model=RateEquationPopulations(),
         )
         self.assertLess(
@@ -426,6 +442,105 @@ class MOTSimulationTests(unittest.TestCase):
             ),
             0.5 * result_a.final_temperature_uK_all + 50.0,
         )
+
+
+class MixedPhysicsTests(unittest.TestCase):
+    """Conservative traps and scattering light in the same simulation."""
+
+    def _tweezer(self):
+        return GaussianTrap(
+            center_m=(0.0, 0.0, 0.0),
+            waist_radial_m=float(um(1.0)),
+            waist_axial_m=float(um(5.0)),
+            depth_uK=1000.0,
+        )
+
+    def test_resonant_light_heats_atom_in_tweezer(self):
+        # Rb87 tweezer + one weak resonant probe: recoil heating must show
+        # up as a temperature increase relative to the dark tweezer.
+        trap = self._tweezer()
+        beam = LaserBeam(direction=(0.0, 0.0, 1.0), detuning_hz=0.0, saturation=0.01)
+        system = LightMatterSystem(species=RB87_D2, beams=[beam])
+        config = SimulationConfig(
+            initial_temperature_uK=10.0,
+            timestep_s=1.0e-7,
+            duration_s=2.0e-3,
+            ensemble_size=100,
+            random_seed=21,
+        )
+        lit = run_simulation(trap, config, scattering=system)
+        dark = run_simulation(trap, config)
+        self.assertGreater(
+            lit.final_temperature_uK_all, 2.0 * dark.final_temperature_uK_all
+        )
+        self.assertGreater(float(np.mean(lit.scattered_photons)), 10.0)
+        # Energy bookkeeping still uses the conservative potential, so the
+        # recoil heating appears as a mechanical energy gain.
+        self.assertGreater(lit.mean_energy_gain_uK, 0.0)
+
+    def test_scattering_disables_energy_loss_criterion(self):
+        # Same run, but atoms heated above trap depth must not be flagged
+        # lost by the (disabled) energy criterion; no loss radius is set.
+        trap = self._tweezer()
+        beam = LaserBeam(direction=(0.0, 0.0, 1.0), detuning_hz=0.0, saturation=0.5)
+        system = LightMatterSystem(species=RB87_D2, beams=[beam])
+        config = SimulationConfig(
+            initial_temperature_uK=10.0,
+            timestep_s=1.0e-7,
+            duration_s=1.0e-3,
+            ensemble_size=30,
+            random_seed=22,
+        )
+        result = run_simulation(trap, config, scattering=system)
+        self.assertEqual(result.loss_fraction, 0.0)
+
+
+class ValidationTests(unittest.TestCase):
+    def test_no_traps_and_no_scattering_raises(self):
+        config = SimulationConfig(
+            initial_temperature_uK=10.0,
+            timestep_s=1.0e-7,
+            duration_s=1.0e-6,
+            ensemble_size=2,
+            initial_cloud_sigma_m=1.0e-6,
+        )
+        with self.assertRaises(ValueError):
+            run_simulation([], config)
+
+    def test_mass_mismatch_raises(self):
+        system = _molasses_system(species=RB85_D2)
+        config = SimulationConfig(
+            initial_temperature_uK=10.0,
+            timestep_s=1.0e-7,
+            duration_s=1.0e-6,
+            ensemble_size=2,
+            initial_cloud_sigma_m=1.0e-6,
+        )  # mass_kg defaults to Rb87
+        with self.assertRaises(ValueError):
+            run_simulation([], config, scattering=system)
+
+    def test_internal_model_without_scattering_raises(self):
+        config = SimulationConfig(
+            initial_temperature_uK=10.0,
+            timestep_s=1.0e-7,
+            duration_s=1.0e-6,
+            ensemble_size=2,
+            initial_cloud_sigma_m=1.0e-6,
+        )
+        with self.assertRaises(TypeError):
+            run_simulation([], config, internal_model=AdiabaticSteadyState())
+
+    def test_no_traps_requires_cloud_sigma(self):
+        system = _molasses_system()
+        config = SimulationConfig(
+            initial_temperature_uK=10.0,
+            timestep_s=1.0e-7,
+            duration_s=1.0e-6,
+            ensemble_size=2,
+            mass_kg=RB85_D2.mass_kg,
+        )
+        with self.assertRaises(ValueError):
+            run_simulation([], config, scattering=system)
 
 
 if __name__ == "__main__":

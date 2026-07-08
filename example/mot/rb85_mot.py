@@ -1,11 +1,12 @@
 """Rb85 magneto-optical trap: capture, cooling, and compression.
 
-A thermal Rb85 cloud (a few mK, launched with a small drift velocity)
-is released into a six-beam MOT: quadrupole magnetic field plus three
-retro-reflected sigma+/sigma- beam pairs, red-detuned from the D2
-cycling transition F=3 -> F'=4. The coupled simulation evolves the
-internal state (steady-state populations by default) and the motion
-(trap-free, radiation pressure + per-photon recoil) together.
+A MOT is just one configuration of the general light-matter machinery:
+a `LightMatterSystem` made of a quadrupole `MagneticFieldConfig` plus
+three retro-reflected sigma+/sigma- `LaserBeam` pairs red-detuned from
+the Rb85 D2 cycling transition F=3 -> F'=4, attached to the standard
+`run_simulation` driver via the `scattering` argument (no conservative
+traps in this example). The internal-state backend evolves populations;
+the momentum update applies per-photon recoil.
 
 Run from the repository root:
 
@@ -28,17 +29,15 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
+from src.analysis import kinetic_temperature_time_series_uK  # noqa: E402
 from src.fields import QuadrupoleMagneticField  # noqa: E402
 from src.internal_state import (  # noqa: E402
     AdiabaticSteadyState,
     RateEquationPopulations,
 )
 from src.laser import six_beam_mot  # noqa: E402
-from src.mot import (  # noqa: E402
-    MOTSimulationConfig,
-    MOTSystem,
-    run_mot_simulation,
-)
+from src.light_matter import LightMatterSystem  # noqa: E402
+from src.simulation import SimulationConfig, run_simulation  # noqa: E402
 from src.species import RB85_D2  # noqa: E402
 from src.units import gauss_per_cm, ms  # noqa: E402
 
@@ -50,7 +49,7 @@ BACKENDS = {
 }
 
 
-def build_system() -> MOTSystem:
+def build_system() -> LightMatterSystem:
     species = RB85_D2
     gamma_hz = species.linewidth_rad_s / (2.0 * np.pi)
     beams = six_beam_mot(
@@ -61,17 +60,20 @@ def build_system() -> MOTSystem:
     quadrupole = QuadrupoleMagneticField(
         gradient_T_per_m=float(gauss_per_cm(10.0))  # 10 G/cm radial
     )
-    return MOTSystem(species=species, beams=beams, magnetic_fields=[quadrupole])
+    return LightMatterSystem(
+        species=species, beams=beams, magnetic_fields=[quadrupole]
+    )
 
 
-def build_config(seed: int) -> MOTSimulationConfig:
-    return MOTSimulationConfig(
+def build_config(seed: int) -> SimulationConfig:
+    return SimulationConfig(
         initial_temperature_uK=3000.0,  # 3 mK cloud, e.g. post-slowing
         initial_cloud_sigma_m=1.0e-3,  # 1 mm rms
         initial_mean_velocity_m_per_s=(1.0, 0.0, 0.0),  # slow drift
         timestep_s=2.0e-7,
         duration_s=float(ms(20.0)),
         ensemble_size=400,
+        mass_kg=RB85_D2.mass_kg,
         loss_radius_m=8.0e-3,  # atoms leaving the beam volume are lost
         random_seed=seed,
         store_trajectories=True,
@@ -110,8 +112,11 @@ def main() -> None:
         f"duration {config.duration_s * 1e3:.1f} ms\n"
     )
 
-    result = run_mot_simulation(
-        system, config, internal_model=BACKENDS[args.backend]()
+    result = run_simulation(
+        [], config, scattering=system, internal_model=BACKENDS[args.backend]()
+    )
+    temperatures_uK = kinetic_temperature_time_series_uK(
+        result, mass_kg=species.mass_kg
     )
 
     survivors = ~result.lost
@@ -124,33 +129,32 @@ def main() -> None:
     )
 
     print(f"Capture fraction      : {result.survival_probability:8.3f}")
-    print(f"Initial temperature   : {result.initial_temperature_uK_all:8.1f} uK")
-    print(f"Final temperature     : {result.final_temperature_uK_survivors:8.1f} uK")
+    print(f"Initial temperature   : {temperatures_uK[0]:8.1f} uK")
+    print(f"Final temperature     : {temperatures_uK[-1]:8.1f} uK")
     print(f"Cloud rms radius      : {initial_rms_mm:6.2f} mm -> {final_rms_mm:6.2f} mm")
-    print(f"Mean scattered photons: {result.mean_scattered_photons:10.0f}")
+    print(
+        "Mean scattered photons: "
+        f"{float(np.mean(result.scattered_photons)):10.0f}"
+    )
     print(
         "Mean excited fraction : "
         f"{float(np.mean(result.final_excited_fraction[survivors])):8.3f}"
     )
 
-    if result.trajectory_times_s is not None:
-        print("\n  t [ms]   T [uK]   rms radius [mm]")
-        times = result.trajectory_times_s
-        stride = max(1, len(times) // 10)
-        for i in range(0, len(times), stride):
-            pos = result.trajectory_positions_m[i]
-            alive = ~result.trajectory_lost[i]
-            rms = float(np.sqrt(np.mean(np.sum(pos[alive] ** 2, axis=-1))) * 1e3)
-            print(
-                f"  {times[i] * 1e3:6.2f}  {result.trajectory_temperature_uK[i]:8.1f}"
-                f"  {rms:10.3f}"
-            )
+    print("\n  t [ms]   T [uK]   rms radius [mm]")
+    times = result.trajectory_times_s
+    stride = max(1, len(times) // 10)
+    for i in range(0, len(times), stride):
+        pos = result.trajectory_positions_m[i]
+        alive = ~result.trajectory_lost[i]
+        rms = float(np.sqrt(np.mean(np.sum(pos[alive] ** 2, axis=-1))) * 1e3)
+        print(f"  {times[i] * 1e3:6.2f}  {temperatures_uK[i]:8.1f}  {rms:10.3f}")
 
     if args.plot or args.save_plot:
-        _plot(result, args.save_plot)
+        _plot(result, temperatures_uK, args.save_plot)
 
 
-def _plot(result, save: bool) -> None:
+def _plot(result, temperatures_uK, save: bool) -> None:
     import matplotlib
 
     if save:
@@ -160,7 +164,7 @@ def _plot(result, save: bool) -> None:
     times_ms = result.trajectory_times_s * 1e3
     fig, axes = plt.subplots(1, 3, figsize=(13, 4))
 
-    axes[0].plot(times_ms, result.trajectory_temperature_uK)
+    axes[0].plot(times_ms, temperatures_uK)
     axes[0].set_xlabel("time [ms]")
     axes[0].set_ylabel("kinetic temperature [uK]")
     axes[0].set_title("Cooling")

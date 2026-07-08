@@ -32,13 +32,16 @@ By default, the simulator rejects and resamples atoms that are already unbound
 in the initial trap, so reported loss is conditioned on successful initial
 loading.
 
-## Magneto-optical trap (MOT) simulation
+## Near-resonant light forces (MOT, molasses, probe beams)
 
-The `src/mot.py` pipeline couples an internal-state backend (steady-state,
-rate-equation, or stochastic-jump populations of the effective two-level
-cycling transition) with a momentum backend (per-photon recoil kicks plus
-optional conservative traps). Magnetic fields, laser beams, and species
-data (Rb85/Rb87 D2) are configurable; see `doc/mot_plan.md` for the model.
+`run_simulation` optionally couples an internal-state backend
+(steady-state, rate-equation, or stochastic-jump populations of the
+effective two-level cycling transition) with the momentum update
+(per-photon recoil kicks plus the conservative traps). Laser beams,
+magnetic fields, and species data (Rb85/Rb87 D2) are freely
+configurable — a MOT is just one such configuration; see
+`doc/light_matter_plan.md` for the model. `example/tweezer_probe_heating.py`
+shows the mixed case: recoil heating of a tweezer-trapped atom.
 
 Run the Rb85 MOT capture-and-cooling example with:
 

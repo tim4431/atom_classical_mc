@@ -13,6 +13,7 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `survival_probability_time_series`: Compute survival probability at each stored trajectory time.
 - `loss_probability_time_series`: Compute loss probability as `1 - survival`.
 - `mean_kinetic_energy_time_series_uK`: Compute mean kinetic energy versus stored trajectory time.
+- `kinetic_temperature_time_series_uK`: Kinetic temperature versus stored time, optionally drift-subtracted.
 - `snapshot_moving_trap`: Return a static `GaussianTrap` snapshot of a `MovingGaussianTrap` at one time.
 
 ## `fields.py`
@@ -51,14 +52,12 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `LaserBeam.saturation_at`: Local saturation parameter with the transverse Gaussian profile applied.
 - `six_beam_mot`: Build the standard three-axis retro-reflected MOT beam set with correct helicities.
 
-## `mot.py`
+## `light_matter.py`
 
-- `MOTSystem`: Species + beams + magnetic fields; reduces geometry to per-atom, per-beam stimulated rates.
-- `MOTSystem.stimulated_rates`: One-way stimulated rate matrix `W(r, v, t)` with Doppler, Zeeman, and polarization decomposition.
-- `MOTSystem.mean_radiation_force`: Deterministic steady-state radiation-pressure force (for analysis/tests).
-- `MOTSimulationConfig`: Configuration for the coupled internal-state + motion Monte Carlo run.
-- `MOTSimulationResult`: Survival, temperatures, photon counts, and optional trajectory time series.
-- `run_mot_simulation`: Operator-split loop: rate evaluation, internal-state backend step, recoil + trap-force momentum update.
+- `LightMatterSystem`: Species + beams + magnetic fields; reduces geometry to per-atom, per-beam stimulated rates.
+- `LightMatterSystem.stimulated_rates`: One-way stimulated rate matrix `W(r, v, t)` with Doppler, Zeeman, and polarization decomposition.
+- `LightMatterSystem.mean_radiation_force`: Deterministic steady-state radiation-pressure force (for analysis/tests).
+- `polarization_fractions`: sigma+/pi/sigma- intensity fractions of a beam relative to the local B axis.
 
 ## `ramp.py`
 
@@ -85,7 +84,7 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `SimulationResult.final_temperature_uK`: Property returning survivors-only final temperature (alias).
 - `SimulationResult.temperature_gain_uK`: Property returning survivors-only temperature gain (alias).
 - `SimulationResult.temperature_gain_uK_at`: Method returning temperature gain for survivors or the full ensemble.
-- `run_simulation`: Run velocity-Verlet propagation. Accepts either `(traps, config)` or the legacy `(static_trap, moving_trap_base, ramp, config)` form.
+- `run_simulation`: Run velocity-Verlet propagation. Accepts either `(traps, config)` or the legacy `(static_trap, moving_trap_base, ramp, config)` form; optional `scattering=LightMatterSystem` and `internal_model=InternalStateModel` keywords add light-force physics (recoil kicks per step, energy-loss criterion auto-disabled).
 
 ## `species.py`
 
