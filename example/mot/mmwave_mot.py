@@ -30,6 +30,22 @@ below it simply see zero light (they are lost in practice and never
 counted as captured); the zeroth diffraction order and grating losses
 are absorbed into the per-sector efficiency.
 
+Two force imbalances shape the trajectories:
+
+- Static balance: the z-momentum flux ratio of diffracted to incident
+  light is exactly `3 * eta` — the 1/cos(alpha) intensity compression
+  of each diffracted beam cancels the cos(alpha) projection of its
+  push. Only `eta = 1/3` balances; larger eta ejects slow atoms upward,
+  smaller lets the incident beam press the cloud toward the chip.
+- Doppler tilt (why the incoming flux sags toward the chip): for an
+  atom crossing at ~20 m/s the incident beam is perpendicular to the
+  motion (no Doppler shift, full scattering rate, pushing down), while
+  the up-pushing diffracted beams with a co-propagating +x component
+  are Doppler-shifted ~1.5 Gamma out of resonance. The one diffracted
+  beam that is counter-propagating (and Doppler-enhanced) only exists
+  downstream of the trap center. Net: every fast atom is pushed toward
+  the chip while it approaches, independent of eta.
+
 Because a 600 K beam is far faster than any MOT capture velocity, only
 the slow Boltzmann tail can be captured. The simulation samples the
 effusive flux distribution `f(v) ~ v^3 exp(-v^2 / 2 sigma^2)` truncated
@@ -39,10 +55,10 @@ analytically).
 
 Run from the repository root:
 
-    python3 example/mot/mmwave_mot.py
+    python3 example/mot/mmwave_mot.py                 # sim + summary + GIF
     python3 example/mot/mmwave_mot.py --atoms 500 --vmax 35
-    python3 example/mot/mmwave_mot.py --save-plot
-    python3 example/mot/mmwave_mot.py --gif   # animated capture GIF
+    python3 example/mot/mmwave_mot.py --no-gif        # skip the animation
+    python3 example/mot/mmwave_mot.py --save-beams    # beam geometry only
 """
 
 from __future__ import annotations
@@ -382,12 +398,22 @@ def main() -> None:
     parser.add_argument("--duration-ms", type=float, default=30.0)
     parser.add_argument("--detuning-gamma", type=float, default=DETUNING_GAMMA)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--plot", action="store_true")
-    parser.add_argument("--save-plot", action="store_true")
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        help="also show the summary figure interactively",
+    )
+    parser.add_argument(
+        "--summary",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="save the summary figure (default on; --no-summary to skip)",
+    )
     parser.add_argument(
         "--gif",
-        action="store_true",
-        help="render an animated GIF of the capture next to this script",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="render the capture GIF (default on; --no-gif to skip)",
     )
     parser.add_argument(
         "--beams",
@@ -427,6 +453,9 @@ def main() -> None:
         f"  deflection angle    : {np.rad2deg(DEFLECTION_ALPHA_RAD):.0f} deg, "
         f"efficiency {DIFFRACTION_EFFICIENCY:.2f}/sector"
     )
+    balance = 3.0 * DIFFRACTION_EFFICIENCY
+    note = "" if abs(balance - 1.0) < 0.05 else "  <-- UNBALANCED, no stable trap"
+    print(f"  z-momentum balance  : 3*eta = {balance:.2f} (1.00 = balanced){note}")
     print(
         f"  simulated window    : v < {args.vmax:.0f} m/s = "
         f"{window_fraction:.2e} of the beam flux\n"
@@ -497,8 +526,8 @@ def main() -> None:
             f"{float(np.mean(result.scattered_photons[captured])):.0f}"
         )
 
-    if args.plot or args.save_plot:
-        _plot(result, captured, args.save_plot)
+    if args.summary or args.plot:
+        _plot(result, captured, save=args.summary, show=args.plot)
 
     if args.gif:
         _render_gif(result, system)
@@ -528,10 +557,10 @@ def _render_gif(result, system: LightMatterSystem) -> None:
     print(f"\nSaved GIF to {out}")
 
 
-def _plot(result, captured, save: bool) -> None:
+def _plot(result, captured, save: bool, show: bool = False) -> None:
     import matplotlib
 
-    if save:
+    if save and not show:
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -586,7 +615,7 @@ def _plot(result, captured, save: bool) -> None:
         out = os.path.join(HERE, "mmwave_mot_summary.png")
         fig.savefig(out, dpi=150)
         print(f"\nSaved plot to {out}")
-    else:
+    if show:
         plt.show()
 
 
