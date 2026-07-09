@@ -16,6 +16,15 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `kinetic_temperature_time_series_uK`: Kinetic temperature versus stored time, optionally drift-subtracted.
 - `snapshot_moving_trap`: Return a static `GaussianTrap` snapshot of a `MovingGaussianTrap` at one time.
 
+## `ensemble.py`
+
+- `EnsembleSample`: Sampled initial `(positions, velocities)` plus the physical `weight` the ensemble represents.
+- `EnsembleSource`: Abstract source of an initial ensemble; `sample(n, rng)` returns an `EnsembleSample`.
+- `ThermalCloud`: Localized cloud — Gaussian blob or uniform box/sphere fill, isotropic Maxwell-Boltzmann velocities plus optional drift (background vapor or pre-cooled cloud).
+- `HarmonicTrapCloud`: Equilibrium thermal cloud of conservative traps (covariance `k_B T K^-1`); the default trapped-run ensemble, as a source.
+- `EffusiveBeam`: Oven with a small hole — flux speed law `f(v) ~ v^3 exp(-v^2/2 sigma^2)` over a truncated window (sample `weight` = window flux fraction), cosine (default) or uniform-solid-angle angular spread over the collimation cone.
+- `EffusiveBeam.flux_cdf` / `window_fraction`: Analytic effusive flux CDF and the flux fraction carried by `[v_min, v_max]`.
+
 ## `fields.py`
 
 - `MagneticFieldConfig`: Abstract base for any time-dependent magnetic field `B(r, t)` in tesla.
@@ -80,7 +89,7 @@ Compact one-line descriptions of functions, classes, and methods in the local
 
 ## `simulation.py`
 
-- `SimulationConfig.__post_init__`: Validate simulation parameters and normalize vector fields. Initial ensembles: trap-Hessian sampling (default), free Gaussian cloud (`initial_cloud_sigma_m` + `initial_mean_velocity_m_per_s`), or explicit arrays (`initial_positions_m` / `initial_velocities_m_per_s_array`, require `reject_initially_lost=False`).
+- `SimulationConfig.__post_init__`: Validate simulation parameters and normalize vector fields. Initial ensembles: trap-Hessian sampling (default), free Gaussian cloud (`initial_cloud_sigma_m` + `initial_mean_velocity_m_per_s`), a named `initial_source` (`ensemble.EnsembleSource`; reports its `weight` as `initial_ensemble_weight`), or explicit arrays (`initial_positions_m` / `initial_velocities_m_per_s_array`, require `reject_initially_lost=False`).
 - `SimulationResult.final_temperature_uK`: Property returning survivors-only final temperature (alias).
 - `SimulationResult.temperature_gain_uK`: Property returning survivors-only temperature gain (alias).
 - `SimulationResult.temperature_gain_uK_at`: Method returning temperature gain for survivors or the full ensemble.

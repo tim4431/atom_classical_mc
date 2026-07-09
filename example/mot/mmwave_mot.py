@@ -83,6 +83,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
 from src.constants import BOLTZMANN_CONSTANT_J_PER_K  # noqa: E402
+from src.ensemble import EffusiveBeam  # noqa: E402
 from src.fields import QuadrupoleMagneticField  # noqa: E402
 from src.internal_state import AdiabaticSteadyState  # noqa: E402
 from src.laser import LaserBeam  # noqa: E402
@@ -102,7 +103,7 @@ GAMMA_HZ = SPECIES.linewidth_rad_s / (2.0 * np.pi)
 
 # --- MOT light -----------------------------------------------------------
 MOT_BEAM_RADIUS_M = 25.0e-3  # 50 mm diameter, uniform top-hat
-MOT_BEAM_POWER_W = 6000.0e-3
+MOT_BEAM_POWER_W = 1000.0e-3
 DETUNING_GAMMA = -1.5  # laser detuning in units of Gamma
 INCIDENT_HELICITY = -1.0  # circular; sign must match the coil polarity
 GRADIENT_G_PER_CM = 5.0  # radial; axial (beam axis) is twice this
@@ -221,61 +222,28 @@ def build_system(detuning_gamma: float) -> LightMatterSystem:
     )
 
 
-def sample_oven_beam(
-    n_atoms: int, v_min: float, v_max: float, rng: np.random.Generator
-) -> tuple[np.ndarray, np.ndarray, float]:
-    """Sample a slow-velocity window of the effusive beam.
+def build_oven_beam(v_min: float, v_max: float) -> EffusiveBeam:
+    """The effusive Rb85 beam as a reusable `EnsembleSource`.
 
-    Returns positions, velocities, and the fraction of the total beam
-    flux carried by the simulated window `v_min < v < v_max`. For the
-    `v^3 exp(-v^2/2 sigma^2)` flux distribution the cumulative fraction
-    below `v` is `F(v) = 1 - exp(-u)(1 + u)` with `u = v^2 / 2 sigma^2`.
+    A hot oven leaks Rb85 through a small hole up the +z axis, aimed
+    through the grating hole at the trap center. `EffusiveBeam` samples
+    the flux distribution `f(v) ~ v^3 exp(-v^2/2 sigma^2)` over the slow,
+    capturable window `[v_min, v_max]` (its `weight` is the flux fraction
+    of that window), with the bare thin-aperture cosine angular law over
+    the residual collimation cone.
     """
 
-    sigma = np.sqrt(BOLTZMANN_CONSTANT_J_PER_K * OVEN_TEMPERATURE_K / SPECIES.mass_kg)
-
-    def flux_cdf(v: float) -> float:
-        u = v**2 / (2.0 * sigma**2)
-        return float(1.0 - np.exp(-u) * (1.0 + u))
-
-    window_fraction = flux_cdf(v_max) - flux_cdf(v_min)
-
-    # Rejection sampling of f(v) ~ v^3 exp(-v^2/2s^2) on [v_min, v_max]:
-    # envelope v^3 (inverse CDF of v^3 restricted to the window), accept
-    # with the Gaussian factor (nearly 1 for v_max << sigma).
-    speeds = np.empty(0)
-    while speeds.size < n_atoms:
-        quantile = rng.random(2 * n_atoms)
-        candidates = (v_min**4 + quantile * (v_max**4 - v_min**4)) ** 0.25
-        accept = rng.random(candidates.size) < np.exp(
-            -(candidates**2) / (2.0 * sigma**2)
-        )
-        speeds = np.concatenate([speeds, candidates[accept]])
-    speeds = speeds[:n_atoms]
-
-    # Transverse launch position: uniform disc on the +z axis, below the
-    # chip, aimed up through the grating hole at the trap center.
-    disc_phi = rng.uniform(0.0, 2.0 * np.pi, n_atoms)
-    disc_r = ATOM_BEAM_RADIUS_M * np.sqrt(rng.random(n_atoms))
-    positions = np.column_stack(
-        [
-            disc_r * np.cos(disc_phi),
-            disc_r * np.sin(disc_phi),
-            np.full(n_atoms, ATOM_BEAM_START_Z_M),
-        ]
+    return EffusiveBeam(
+        temperature_K=OVEN_TEMPERATURE_K,
+        mass_kg=SPECIES.mass_kg,
+        aperture_radius_m=ATOM_BEAM_RADIUS_M,
+        v_min_m_per_s=v_min,
+        v_max_m_per_s=v_max,
+        direction=(0.0, 0.0, 1.0),
+        launch_center_m=(0.0, 0.0, ATOM_BEAM_START_Z_M),
+        divergence_half_angle_rad=DIVERGENCE_HALF_ANGLE_RAD,
+        angular="cosine",
     )
-
-    # Residual divergence: velocity tilted by a small random angle off +z.
-    theta = DIVERGENCE_HALF_ANGLE_RAD * np.sqrt(rng.random(n_atoms))
-    tilt_phi = rng.uniform(0.0, 2.0 * np.pi, n_atoms)
-    velocities = np.column_stack(
-        [
-            speeds * np.sin(theta) * np.cos(tilt_phi),
-            speeds * np.sin(theta) * np.sin(tilt_phi),
-            speeds * np.cos(theta),
-        ]
-    )
-    return positions, velocities, window_fraction
 
 
 def print_diagnostics(system: LightMatterSystem) -> None:
@@ -485,10 +453,8 @@ def main() -> None:
     if args.beams or args.save_beams:
         _beams_figure(system, save=args.save_beams)
         return
-    rng = np.random.default_rng(args.seed)
-    positions, velocities, window_fraction = sample_oven_beam(
-        args.atoms, args.vmin, args.vmax, rng
-    )
+    oven_beam = build_oven_beam(args.vmin, args.vmax)
+    window_fraction = oven_beam.window_fraction()
 
     s_inc = incident_saturation()
     print("Grating MOT loading from a hot effusive beam")
@@ -518,13 +484,12 @@ def main() -> None:
     print_diagnostics(system)
 
     config = SimulationConfig(
-        initial_temperature_uK=0.0,  # unused: explicit ensemble below
+        initial_temperature_uK=0.0,  # unused: the effusive-beam source below
         timestep_s=2.0e-7,
         duration_s=float(ms(args.duration_ms)),
         ensemble_size=args.atoms,
         mass_kg=SPECIES.mass_kg,
-        initial_positions_m=positions,
-        initial_velocities_m_per_s_array=velocities,
+        initial_source=oven_beam,
         reject_initially_lost=False,
         loss_radius_m=40.0e-3,
         random_seed=args.seed,

@@ -9,6 +9,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .constants import RB87_MASS_KG
+from .ensemble import EnsembleSource
 from .internal_state import (
     AdiabaticSteadyState,
     InternalStateModel,
@@ -38,6 +39,13 @@ class SimulationConfig:
     for capture studies. `initial_mean_velocity_m_per_s` adds a drift to
     the Maxwell-Boltzmann velocities (e.g. launched atoms).
 
+    For a named physical source (a thermal cloud, a harmonic-trap
+    equilibrium cloud, or an effusive oven beam) set `initial_source` to
+    an `ensemble.EnsembleSource`; it supplies both positions and
+    velocities and overrides the knobs above. Its per-sample `weight`
+    (e.g. the flux fraction of a truncated beam window) is reported as
+    `SimulationResult.initial_ensemble_weight`.
+
     For full control, pass explicit `initial_positions_m` and/or
     `initial_velocities_m_per_s_array` (shape `(ensemble_size, 3)`);
     each overrides the corresponding sampler (e.g. an effusive-beam
@@ -58,6 +66,7 @@ class SimulationConfig:
     initial_mean_velocity_m_per_s: ArrayLike = (0.0, 0.0, 0.0)
     initial_positions_m: ArrayLike | None = None
     initial_velocities_m_per_s_array: ArrayLike | None = None
+    initial_source: EnsembleSource | None = None
     reject_initially_lost: bool = True
     max_initial_resampling_rounds: int = 100
     store_trajectories: bool = False
@@ -127,6 +136,15 @@ class SimulationConfig:
                 "reject_initially_lost=False."
             )
 
+        if self.initial_source is not None:
+            if not isinstance(self.initial_source, EnsembleSource):
+                raise TypeError("initial_source must be an ensemble.EnsembleSource.")
+            if explicit:
+                raise ValueError(
+                    "initial_source and explicit initial_positions_m / "
+                    "initial_velocities_m_per_s_array are mutually exclusive."
+                )
+
 
 @dataclass(frozen=True)
 class SimulationResult:
@@ -167,6 +185,7 @@ class SimulationResult:
     duration_s: float = 0.0
     initial_rejected_count: int = 0
     initial_rejection_fraction: float = 0.0
+    initial_ensemble_weight: float = 1.0
     trajectory_times_s: NDArray[np.float64] | None = None
     trajectory_positions_m: NDArray[np.float64] | None = None
     trajectory_velocities_m_per_s: NDArray[np.float64] | None = None
@@ -300,7 +319,7 @@ def _run_simulation_core(
     # attached light force invalidates it (see run_simulation docstring).
     track_energy = config.track_energy_loss and scattering is None and bool(traps)
 
-    positions, velocities = _sample_initial_ensemble(
+    positions, velocities, initial_ensemble_weight = _sample_initial_ensemble(
         traps, config, config.ensemble_size, rng
     )
     initial_rejected_count = 0
@@ -485,6 +504,7 @@ def _run_simulation_core(
             if initial_rejected_count > 0
             else 0.0
         ),
+        initial_ensemble_weight=initial_ensemble_weight,
         trajectory_times_s=(
             np.asarray(trajectory_times, dtype=float)
             if config.store_trajectories
@@ -533,14 +553,27 @@ def _sample_initial_ensemble(
     config: SimulationConfig,
     count: int,
     rng: np.random.Generator,
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Sample initial positions and velocities per the config.
+) -> tuple[NDArray[np.float64], NDArray[np.float64], float]:
+    """Sample initial positions, velocities, and the ensemble weight.
 
-    Positions: explicit array if given, else a free Gaussian cloud if
-    `initial_cloud_sigma_m` is set, otherwise the local harmonic
-    approximation of the traps. Velocities: explicit array if given,
-    else Maxwell-Boltzmann plus the configured mean drift.
+    An `initial_source` (if set) supplies all three. Otherwise the weight
+    is 1.0 and positions come from an explicit array, else a free Gaussian
+    cloud if `initial_cloud_sigma_m` is set, else the local harmonic
+    approximation of the traps; velocities from an explicit array, else
+    Maxwell-Boltzmann plus the configured mean drift.
     """
+
+    if config.initial_source is not None:
+        sample = config.initial_source.sample(count, rng)
+        positions = np.asarray(sample.positions_m, dtype=float)
+        velocities = np.asarray(sample.velocities_m_per_s, dtype=float)
+        expected = (count, 3)
+        if positions.shape != expected or velocities.shape != expected:
+            raise ValueError(
+                "initial_source produced arrays of shape "
+                f"{positions.shape} / {velocities.shape}; expected {expected}."
+            )
+        return positions.copy(), velocities.copy(), float(sample.weight)
 
     if config.initial_positions_m is not None:
         positions = np.array(config.initial_positions_m, dtype=float, copy=True)
@@ -576,7 +609,7 @@ def _sample_initial_ensemble(
             )
             + config.initial_mean_velocity_m_per_s
         )
-    return positions, velocities
+    return positions, velocities, 1.0
 
 
 def _resample_initially_lost(
@@ -597,9 +630,10 @@ def _resample_initially_lost(
 
         count = int(np.sum(lost))
         rejected_count += count
-        positions_m[lost], velocities_m_per_s[lost] = _sample_initial_ensemble(
+        new_positions, new_velocities, _ = _sample_initial_ensemble(
             traps, config, count, rng
         )
+        positions_m[lost], velocities_m_per_s[lost] = new_positions, new_velocities
         lost = _initial_lost_flags(
             traps, positions_m, velocities_m_per_s, config, track_energy
         )
