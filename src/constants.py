@@ -2,7 +2,11 @@
 
 BOLTZMANN_CONSTANT_J_PER_K = 1.380649e-23
 HBAR_J_S = 1.054571817e-34
+PLANCK_CONSTANT_J_S = 6.62607015e-34
 ATOMIC_MASS_UNIT_KG = 1.66053906660e-27
+SPEED_OF_LIGHT_M_PER_S = 299792458.0
+BOHR_MAGNETON_J_PER_T = 9.2740100783e-24
 
-# Rubidium-87 atomic mass. The isotope mass is more accurate than using 87 amu.
+# Rubidium atomic masses. The isotope mass is more accurate than integer amu.
 RB87_MASS_KG = 86.9091805310 * ATOMIC_MASS_UNIT_KG
+RB85_MASS_KG = 84.9117897379 * ATOMIC_MASS_UNIT_KG

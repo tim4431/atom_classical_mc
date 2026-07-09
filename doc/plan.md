@@ -126,7 +126,7 @@ The main workflow is:
   random-seed conditions. The example includes linear, cubic smoothstep,
   quintic minimum-jerk, and sinusoidal profiles.
 - Keep Matplotlib optional: the simulator can run headless, while
-  `example/slm_to_aod_transfer.py --plot` produces the diagnostic figures when
+  `example/aod/slm_to_aod_transfer.py --plot` produces the diagnostic figures when
   the optional visualization dependency is installed.
 
 ## Test Plan

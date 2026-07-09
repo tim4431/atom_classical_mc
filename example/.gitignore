@@ -1,2 +1,5 @@
+# Regenerable example outputs (figures, GIFs, cached sweeps) all live in
+# per-example render/ subdirs; see example/README.md.
 render/
-render_*/
+*.png
+*.gif

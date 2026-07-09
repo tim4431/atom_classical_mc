@@ -350,7 +350,9 @@ def main() -> None:
         f"{min_pos_um[2]:+.2f}) µm; configured depth: {DEPTH_UK:.4f} µK."
     )
 
-    plot_path = HERE / OUTPUT_PLOT
+    render_dir = HERE / "render"
+    render_dir.mkdir(exist_ok=True)
+    plot_path = render_dir / OUTPUT_PLOT
     plot_slices(
         trap,
         x_axis,

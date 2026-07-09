@@ -2,9 +2,9 @@
 
 Run from the repository root:
 
-    python3 example/transfer_animation.py
+    python3 example/aod/transfer_animation.py
 
-Produces:
+Produces (into the render/ subdir next to this script):
   - transfer_frame_0p20ms.png  (single still at one timestep)
   - transfer.gif               (full ramp animation, split xy + 3D view)
 """
@@ -14,11 +14,11 @@ from __future__ import annotations
 import os
 import sys
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
 # Re-use the example's geometry so the animation matches the static plots.
-from example.slm_to_aod_transfer import build_transfer_problem  # noqa: E402
+from example.aod.slm_to_aod_transfer import build_transfer_problem  # noqa: E402
 
 from src.simulation import run_simulation  # noqa: E402
 from src.visualization import draw_frame, render_animation  # noqa: E402

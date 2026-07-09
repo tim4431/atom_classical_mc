@@ -41,7 +41,7 @@ from src.trap import GaussianTrap  # noqa: E402
 from src.units import ms, um  # noqa: E402
 
 HERE = os.path.dirname(__file__)
-RENDER_DIR = os.path.join(HERE, "render_aod")
+RENDER_DIR = os.path.join(HERE, "render")
 os.makedirs(RENDER_DIR, exist_ok=True)
 
 SLM_WAIST_RADIAL_UM = 1.2

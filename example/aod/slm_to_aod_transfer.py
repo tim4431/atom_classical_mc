@@ -2,9 +2,10 @@
 
 Run from the repository root:
 
-    python3 example/slm_to_aod_transfer.py
+    python3 example/aod/slm_to_aod_transfer.py
 
-Saves trajectory, energy, and 3D plots next to this script.
+Saves trajectory, energy, and 3D plots into the render/ subdir next to this
+script.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import sys
 
 import numpy as np
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
 from src.analysis import (  # noqa: E402

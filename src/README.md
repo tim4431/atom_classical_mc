@@ -13,7 +13,15 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `survival_probability_time_series`: Compute survival probability at each stored trajectory time.
 - `loss_probability_time_series`: Compute loss probability as `1 - survival`.
 - `mean_kinetic_energy_time_series_uK`: Compute mean kinetic energy versus stored trajectory time.
+- `kinetic_temperature_time_series_uK`: Kinetic temperature versus stored time, optionally drift-subtracted.
 - `snapshot_moving_trap`: Return a static `GaussianTrap` snapshot of a `MovingGaussianTrap` at one time.
+
+## `fields.py`
+
+- `MagneticFieldConfig`: Abstract base for any time-dependent magnetic field `B(r, t)` in tesla.
+- `UniformMagneticField`: Spatially uniform bias field.
+- `QuadrupoleMagneticField`: Linear anti-Helmholtz quadrupole `B = b'(x, y, -2z)` about an arbitrary axis.
+- `total_magnetic_field`: Linear sum of field evaluations at a chosen time.
 
 ## `harmonic.py`
 
@@ -28,6 +36,28 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `decompose_motion_into_harmonic_modes`: Project atom phase-space coordinates into harmonic normal modes.
 - `coherent_fock_probabilities`: Compute coherent-state Fock probabilities from mean occupations.
 - `summarize_mode_occupations`: Summarize per-mode occupation distributions with mean, median, and standard deviation.
+
+## `internal_state.py`
+
+- `ScatteringEvents`: Per-step photon counts (absorbed / stimulated per beam, spontaneous per atom).
+- `InternalStateModel`: Abstract internal-state backend consuming the stimulated rate matrix `W`.
+- `AdiabaticSteadyState`: Populations locked to the local steady state; Poisson photon numbers.
+- `RateEquationPopulations`: Two-level excited population integrated exactly per step (handles transients).
+- `StochasticJumpState`: Discrete ground/excited kinetic-MC trajectory (quantum-jump analog, needs `dt << 1/Gamma`).
+- `sample_recoil_velocity_kicks`: Convert photon events into per-atom recoil velocity kicks (exact per-photon spontaneous directions).
+
+## `laser.py`
+
+- `LaserBeam`: Collimated traveling-wave beam: direction, detuning, saturation `s0`, helicity, optional Gaussian waist, optional arbitrary intensity `profile` callable (apertures, grating-sector prisms, shadows).
+- `LaserBeam.saturation_at`: Local saturation parameter with the Gaussian waist and/or custom profile applied.
+- `six_beam_mot`: Build the standard three-axis retro-reflected MOT beam set with correct helicities.
+
+## `light_matter.py`
+
+- `LightMatterSystem`: Species + beams + magnetic fields; reduces geometry to per-atom, per-beam stimulated rates.
+- `LightMatterSystem.stimulated_rates`: One-way stimulated rate matrix `W(r, v, t)` with Doppler, Zeeman, and polarization decomposition.
+- `LightMatterSystem.mean_radiation_force`: Deterministic steady-state radiation-pressure force (for analysis/tests).
+- `polarization_fractions`: sigma+/pi/sigma- intensity fractions of a beam relative to the local B axis.
 
 ## `ramp.py`
 
@@ -50,11 +80,17 @@ Compact one-line descriptions of functions, classes, and methods in the local
 
 ## `simulation.py`
 
-- `SimulationConfig.__post_init__`: Validate simulation parameters and normalize vector fields.
+- `SimulationConfig.__post_init__`: Validate simulation parameters and normalize vector fields. Initial ensembles: trap-Hessian sampling (default), free Gaussian cloud (`initial_cloud_sigma_m` + `initial_mean_velocity_m_per_s`), or explicit arrays (`initial_positions_m` / `initial_velocities_m_per_s_array`, require `reject_initially_lost=False`).
 - `SimulationResult.final_temperature_uK`: Property returning survivors-only final temperature (alias).
 - `SimulationResult.temperature_gain_uK`: Property returning survivors-only temperature gain (alias).
 - `SimulationResult.temperature_gain_uK_at`: Method returning temperature gain for survivors or the full ensemble.
-- `run_simulation`: Run velocity-Verlet propagation. Accepts either `(traps, config)` or the legacy `(static_trap, moving_trap_base, ramp, config)` form.
+- `run_simulation`: Run velocity-Verlet propagation. Accepts either `(traps, config)` or the legacy `(static_trap, moving_trap_base, ramp, config)` form; optional `scattering=LightMatterSystem` and `internal_model=InternalStateModel` keywords add light-force physics (recoil kicks per step, energy-loss criterion auto-disabled).
+
+## `species.py`
+
+- `AtomSpecies`: Mass plus effective two-level cycling-transition data (wavelength, linewidth, `I_sat`, g-factors).
+- `AtomSpecies.wavenumber_rad_per_m` / `recoil_velocity_m_per_s` / `mu_eff_j_per_t` / `doppler_temperature_uK`: Derived transition scales.
+- `RB85_D2`, `RB87_D2`: Preset D2 cycling transitions (Steck data).
 
 ## `trap.py`
 
@@ -79,6 +115,8 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `joule_to_microkelvin`: Convert joules to the equivalent temperature-like scale in microkelvin.
 - `um`: Convert micrometers to meters.
 - `ms`: Convert milliseconds to seconds.
+- `mhz`: Convert megahertz to hertz.
+- `gauss` / `gauss_per_cm`: Convert gauss (per cm) to tesla (per m).
 
 ## `visualization.py`
 
@@ -89,3 +127,5 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `draw_traps_2d`, `draw_atoms_2d`, `draw_tweezer_beams_3d`, `draw_tweezer_beam_side_2d`,
   `draw_trap_ellipsoids_3d`, `draw_atoms_3d`, `draw_atom_trails_2d`, `draw_frame`,
   `render_animation`: lower-level frame and animation helpers.
+- `draw_cloud_frame`: Snapshot of a trap-free scattering run — speed-colored cloud plus cooling curve.
+- `render_cloud_animation`: Stitch `draw_cloud_frame`s into a GIF/WEBP/APNG for MOT-style runs.
