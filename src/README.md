@@ -138,3 +138,6 @@ Compact one-line descriptions of functions, classes, and methods in the local
   `render_animation`: lower-level frame and animation helpers.
 - `draw_cloud_frame`: Snapshot of a trap-free scattering run — speed-colored cloud plus cooling curve.
 - `render_cloud_animation`: Stitch `draw_cloud_frame`s into a GIF/WEBP/APNG for MOT-style runs.
+- `_render_frames`: Render every frame of an animation, fanning out across worker processes (serial fallback).
+- `_encode_frames` / `_save_animation`: Assign per-frame durations (start/end holds) and stitch PNGs into a GIF/WEBP/APNG; GIF uses a whole-run 256-color palette with optional Floyd-Steinberg dithering and `gifsicle -O3`.
+- `_build_gif_palette` / `_try_gifsicle_optimize`: Stratified whole-run GIF palette; in-place `gifsicle` shrink when available.

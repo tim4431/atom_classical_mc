@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import math
 import os
+import shutil
+import subprocess
 import tempfile
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Any, Iterable, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -1076,6 +1079,10 @@ def render_animation(
     extent_um: tuple[float, float, float, float, float, float] | None = None,
     figsize: tuple[float, float] | None = None,
     show_progress: bool = True,
+    workers: int | None = None,
+    hold_start_s: float = 0.4,
+    hold_end_s: float = 0.8,
+    dither: bool = True,
 ) -> Path:
     """Render a GIF by calling `draw_frame` per timestep, then stitching frames.
 
@@ -1092,12 +1099,17 @@ def render_animation(
     Both default to `max(static_depths ∪ ramp.depths_uK)`, the deepest
     well present anywhere in the run.
 
-    Output extension `.gif` (default), `.webp`, or `.png` (animated PNG)
-    determines the encoder.
+    Frames are rendered across `workers` processes (default: one per CPU,
+    capped) and stitched serially; set `workers=1` to force serial. The
+    first/last frames linger `hold_start_s`/`hold_end_s` extra seconds
+    (encoded as an extended per-frame duration, not duplicated frames) so
+    the initial and final configurations read clearly. Output extension
+    `.gif` (default), `.webp`, or `.png` (animated PNG) determines the
+    encoder.
     """
     try:
-        import matplotlib.pyplot as plt
-        from PIL import Image
+        import matplotlib.pyplot as plt  # noqa: F401  (fail early if missing)
+        from PIL import Image  # noqa: F401
     except ImportError as exc:
         raise ImportError(
             "Animation requires matplotlib and Pillow; install with `pip install .[viz]`."
@@ -1137,24 +1149,30 @@ def render_animation(
     duration = float(result.trajectory_times_s[-1])
     times = np.linspace(0.0, duration, max(2, int(n_frames)))
 
-    progress = _progress_iter if show_progress else lambda x, **_: x
-
-    images: list[Image.Image] = []
     with tempfile.TemporaryDirectory(prefix="atom_mc_frames_") as tmpdir:
-        for k, t in enumerate(progress(times, total=len(times), desc="render frames")):
-            figure, _ = draw_frame(
-                float(t), result, static_traps, moving_trap_base, ramp,
+        payload = {
+            "kind": "tweezer",
+            "result": result,
+            "static_traps": static_traps,
+            "moving_trap_base": moving_trap_base,
+            "ramp": ramp,
+            "dpi": dpi,
+            "tmpdir": tmpdir,
+            "kwargs": dict(
                 view=view, grid_n=grid_n, extent_um=extent_um, cmap=cmap,
                 vmin_uK=vmin_uK, depth_reference_uK=depth_reference_uK,
                 show_trails=show_trails, trail_samples=trail_samples,
                 figsize=figsize,
-            )
-            frame_path = os.path.join(tmpdir, f"frame_{k:05d}.png")
-            figure.savefig(frame_path, dpi=dpi, facecolor="white")
-            plt.close(figure)
-            images.append(Image.open(frame_path).convert("RGB").copy())
-
-        _save_animation(images, out, fps=fps)
+            ),
+        }
+        frame_paths = _render_frames(
+            payload, times, workers=workers, show_progress=show_progress,
+        )
+        _encode_frames(
+            frame_paths, out, fps=fps,
+            hold_start_s=hold_start_s, hold_end_s=hold_end_s,
+            dither=dither, show_progress=show_progress,
+        )
 
     return out
 
@@ -1431,18 +1449,25 @@ def render_cloud_animation(
     cmap: str = "viridis",
     figsize: tuple[float, float] | None = None,
     show_progress: bool = True,
+    workers: int | None = None,
+    hold_start_s: float = 0.4,
+    hold_end_s: float = 0.8,
+    dither: bool = True,
 ) -> Path:
     """Render a GIF of a scattering run by stitching `draw_cloud_frame`s.
 
     The simulation must have been run with `store_trajectories=True` (and
     stored velocities, which the default settings keep). Axis extent, the
     speed color scale, and the cooling curve are computed once so they stay
-    fixed across all frames. Output extension `.gif` (default), `.webp`, or
-    `.png`/`.apng` selects the encoder, as in `render_animation`.
+    fixed across all frames. Frames render across `workers` processes
+    (default: one per CPU, capped; `workers=1` forces serial) and the
+    first/last frames hold `hold_start_s`/`hold_end_s` extra seconds.
+    Output extension `.gif` (default), `.webp`, or `.png`/`.apng` selects
+    the encoder, as in `render_animation`.
     """
     try:
-        import matplotlib.pyplot as plt
-        from PIL import Image
+        import matplotlib.pyplot as plt  # noqa: F401  (fail early if missing)
+        from PIL import Image  # noqa: F401
     except ImportError as exc:
         raise ImportError(
             "Animation requires matplotlib and Pillow; install with `pip install .[viz]`."
@@ -1469,74 +1494,304 @@ def render_cloud_animation(
     duration = float(result.trajectory_times_s[-1])
     frame_times = np.linspace(0.0, duration, max(2, int(n_frames)))
 
-    progress = _progress_iter if show_progress else lambda x, **_: x
-
-    images: list[Image.Image] = []
     with tempfile.TemporaryDirectory(prefix="atom_mc_frames_") as tmpdir:
-        for k, t in enumerate(
-            progress(frame_times, total=len(frame_times), desc="render frames")
-        ):
-            figure, _ = draw_cloud_frame(
-                float(t), result, mass_kg=mass_kg, plane=plane, beams=beams,
-                beam_overlay=beam_overlay,
-                extent_mm=extent_mm, speed_vmax_m_per_s=speed_vmax_m_per_s,
+        payload = {
+            "kind": "cloud",
+            "result": result,
+            "dpi": dpi,
+            "tmpdir": tmpdir,
+            "kwargs": dict(
+                mass_kg=mass_kg, plane=plane, beams=beams,
+                beam_overlay=beam_overlay, extent_mm=extent_mm,
+                speed_vmax_m_per_s=speed_vmax_m_per_s,
                 temperatures_uK=temperatures_uK,
                 doppler_limit_uK=doppler_limit_uK, cmap=cmap, figsize=figsize,
-            )
-            frame_path = os.path.join(tmpdir, f"frame_{k:05d}.png")
-            figure.savefig(frame_path, dpi=dpi, facecolor="white")
-            plt.close(figure)
-            images.append(Image.open(frame_path).convert("RGB").copy())
-
-        _save_animation(images, out, fps=fps)
+            ),
+        }
+        frame_paths = _render_frames(
+            payload, frame_times, workers=workers, show_progress=show_progress,
+        )
+        _encode_frames(
+            frame_paths, out, fps=fps,
+            hold_start_s=hold_start_s, hold_end_s=hold_end_s,
+            dither=dither, show_progress=show_progress,
+        )
 
     return out
 
 
-def _save_animation(images: list, output_path: Path, *, fps: int) -> None:
-    """Stitch frames into a GIF/WEBP/APNG by extension."""
+# --- parallel frame rendering + encoding -----------------------------------
+#
+# Both `render_animation` (tweezer) and `render_cloud_animation` (cloud) fan
+# their per-frame `draw_*` calls out across worker processes: rendering a
+# frame is a pure function of `(payload, k, t)`, and the payload (result,
+# traps/beams, draw kwargs) is picklable, so the only shared state is the
+# temp dir the PNGs land in. Each worker snapshots the payload once via the
+# pool initializer. On any pool/pickle failure we fall back to serial so a
+# render never hard-fails just because multiprocessing is unavailable.
+
+
+_FRAME_WORKER: dict[str, Any] = {}
+
+
+def _frame_worker_init(payload: dict[str, Any]) -> None:
+    """Pool initializer: pin a headless backend and stash the frame payload."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    _FRAME_WORKER["payload"] = payload
+
+
+def _frame_worker_render(task: tuple[int, float]) -> str:
+    return _render_one_frame(_FRAME_WORKER["payload"], task)
+
+
+def _render_one_frame(payload: dict[str, Any], task: tuple[int, float]) -> str:
+    """Render frame `k` at time `t` to a PNG and return its path.
+
+    Shared by the serial and parallel paths; dispatches on `payload['kind']`
+    so the tweezer and cloud composers reuse the same driver.
+    """
+    import matplotlib.pyplot as plt
+
+    k, t = int(task[0]), float(task[1])
+    kind = payload["kind"]
+    kwargs = payload["kwargs"]
+    if kind == "tweezer":
+        figure, _ = draw_frame(
+            t, payload["result"], payload["static_traps"],
+            payload["moving_trap_base"], payload["ramp"], **kwargs,
+        )
+    elif kind == "cloud":
+        figure, _ = draw_cloud_frame(t, payload["result"], **kwargs)
+    else:  # pragma: no cover - guarded by callers
+        raise ValueError(f"unknown frame payload kind {kind!r}")
+
+    frame_path = os.path.join(payload["tmpdir"], f"frame_{k:05d}.png")
+    figure.savefig(frame_path, dpi=payload["dpi"], facecolor="white")
+    plt.close(figure)
+    return frame_path
+
+
+def _render_frames(
+    payload: dict[str, Any],
+    times: Iterable[float],
+    *,
+    workers: int | None,
+    show_progress: bool,
+) -> list[Path]:
+    """Render every frame in `times`, in parallel when it pays off.
+
+    Returns the frame PNG paths in frame order. `workers=None` picks one
+    process per CPU (capped at 16); `workers=1` — or a job too small to
+    amortize process spawn — renders serially in-process.
+    """
+    tasks = [(k, float(t)) for k, t in enumerate(times)]
+    n = len(tasks)
+
+    if workers is None:
+        workers = min(os.cpu_count() or 1, n, 16)
+    workers = max(1, int(workers))
+
+    # Process spawn (Windows) costs ~1 s; below this the serial path wins.
+    if workers == 1 or n < 8:
+        return [
+            Path(_render_one_frame(payload, task))
+            for task in _progress_iter(
+                tasks, total=n, desc="render frames", enabled=show_progress,
+            )
+        ]
+
+    try:
+        chunksize = max(1, n // (workers * 4))
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_frame_worker_init,
+            initargs=(payload,),
+        ) as executor:
+            results = executor.map(
+                _frame_worker_render, tasks, chunksize=chunksize,
+            )
+            return [
+                Path(p)
+                for p in _progress_iter(
+                    results, total=n, desc="render frames", enabled=show_progress,
+                )
+            ]
+    except Exception as exc:  # pickling / pool spawn failure -> serial
+        print(
+            f"visualization: parallel render unavailable ({type(exc).__name__}: "
+            f"{exc}); falling back to serial."
+        )
+        return [
+            Path(_render_one_frame(payload, task))
+            for task in _progress_iter(
+                tasks, total=n, desc="render frames (serial)", enabled=show_progress,
+            )
+        ]
+
+
+def _encode_frames(
+    frame_paths: list[Path],
+    output_path: Path,
+    *,
+    fps: int,
+    hold_start_s: float,
+    hold_end_s: float,
+    dither: bool = True,
+    show_progress: bool,
+) -> None:
+    """Assign per-frame durations (with start/end holds) and stitch."""
+    if not frame_paths:
+        raise ValueError("no frames to save")
+    frame_ms = max(1, int(round(1000.0 / max(1, fps))))
+    durations = [frame_ms] * len(frame_paths)
+    durations[0] += max(0, int(round(hold_start_s * 1000.0)))
+    durations[-1] += max(0, int(round(hold_end_s * 1000.0)))
+    _save_animation(
+        frame_paths, output_path, durations=durations,
+        dither=dither, show_progress=show_progress,
+    )
+
+
+_GIF_PALETTE_SAMPLES = 16  # frames to stratify-sample for palette construction
+_GIF_PALETTE_COLORS = 256
+
+
+def _build_gif_palette(frame_paths: list[Path]) -> "Any":
+    """Build a shared GIF palette from frames spanning the whole animation.
+
+    Median-cut on a single frame under-represents colors that only appear
+    briefly (a trap fading in, a lost atom flashing gray). Stacking
+    evenly-spaced frames into one composite lets every phase contribute to
+    the 256-color budget in proportion to its on-screen time, so the encoder
+    stops snapping short-lived colors to the nearest survivor.
+    """
     from PIL import Image
 
-    if not images:
+    n = len(frame_paths)
+    n_samples = max(1, min(_GIF_PALETTE_SAMPLES, n))
+    if n_samples == 1:
+        indices = [0]
+    else:
+        indices = sorted(
+            {int(round(k * (n - 1) / (n_samples - 1))) for k in range(n_samples)}
+        )
+
+    samples = []
+    try:
+        for idx in indices:
+            with Image.open(frame_paths[idx]) as raw:
+                samples.append(raw.convert("RGB").copy())
+        width = samples[0].width
+        composite = Image.new("RGB", (width, sum(s.height for s in samples)), "white")
+        y = 0
+        for img in samples:
+            composite.paste(img, (0, y))
+            y += img.height
+        try:
+            return composite.quantize(
+                colors=_GIF_PALETTE_COLORS,
+                method=Image.Quantize.MEDIANCUT,
+                dither=Image.Dither.NONE,
+            )
+        finally:
+            composite.close()
+    finally:
+        for img in samples:
+            img.close()
+
+
+def _save_animation(
+    frame_paths: list[Path],
+    output_path: Path,
+    *,
+    durations: list[int],
+    dither: bool = True,
+    show_progress: bool,
+) -> None:
+    """Stitch PNG frames into a GIF/WEBP/APNG, picking the encoder by extension.
+
+    GIF uses a shared 256-color palette built across the whole run (so
+    short-lived colors — a trap fading in, a lost atom flashing gray — are
+    not snapped to the nearest survivor). With `dither=True` (default)
+    Floyd-Steinberg keeps the magma/viridis heatmaps smooth instead of
+    banded, at the cost of a larger file; `gifsicle -O3` when on PATH
+    shrinks it further, and `.webp` output is lossless and usually smaller
+    still. WebP/APNG keep RGBA and lean on the codec. `durations` is a
+    per-frame millisecond list (holds live here, not in duplicated frames).
+    """
+    from PIL import Image
+
+    if not frame_paths:
         raise ValueError("no frames to save")
-    duration_ms = max(1, int(round(1000.0 / max(1, fps))))
+    if len(durations) != len(frame_paths):
+        raise ValueError("durations length must match frame_paths length")
 
     ext = output_path.suffix.lower()
+    palette = None
     if ext == ".gif":
-        # Quantize against a shared 128-color palette taken from the middle
-        # frame so the GIF encoder can reuse colors across frames.
-        ref = images[len(images) // 2].quantize(
-            colors=128, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE,
+        palette = _build_gif_palette(frame_paths)
+        dither_mode = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
+        convert = lambda raw: raw.convert("RGB").quantize(
+            palette=palette, dither=dither_mode,
         )
-        quantized = [
-            img.quantize(palette=ref, dither=Image.Dither.NONE) for img in images
-        ]
-        quantized[0].save(
-            output_path, save_all=True, append_images=quantized[1:],
-            duration=duration_ms, loop=0, optimize=True,
-        )
+        save_kwargs: dict[str, Any] = dict(loop=0, optimize=True)
     elif ext == ".webp":
-        rgba = [img.convert("RGBA") for img in images]
-        rgba[0].save(
-            output_path, format="WebP", save_all=True, append_images=rgba[1:],
-            duration=duration_ms, loop=0, lossless=True, method=6,
-        )
+        convert = lambda raw: raw.convert("RGBA")
+        save_kwargs = dict(format="WebP", loop=0, lossless=True, method=6)
     elif ext in (".apng", ".png"):
-        rgba = [img.convert("RGBA") for img in images]
-        rgba[0].save(
-            output_path, format="PNG", save_all=True, append_images=rgba[1:],
-            duration=duration_ms, loop=0,
-        )
+        convert = lambda raw: raw.convert("RGBA")
+        save_kwargs = dict(format="PNG", loop=0)
     else:
         raise ValueError(
             f"Cannot infer animation format from extension {ext!r}; "
             "use .gif, .webp, or .apng."
         )
 
+    images = []
+    for path in _progress_iter(
+        frame_paths, total=len(frame_paths), desc="encode", enabled=show_progress,
+    ):
+        with Image.open(path) as raw:
+            images.append(convert(raw))
+    try:
+        images[0].save(
+            output_path, save_all=True, append_images=images[1:],
+            duration=durations, **save_kwargs,
+        )
+    finally:
+        for image in images:
+            image.close()
+        if palette is not None:
+            palette.close()
 
-def _progress_iter(iterable, *, total, desc):
+    if ext == ".gif":
+        _try_gifsicle_optimize(output_path)
+
+
+def _try_gifsicle_optimize(path: Path) -> None:
+    """Shrink a GIF in place with `gifsicle -O3`, silently skipped if absent."""
+    if shutil.which("gifsicle") is None:
+        return
+    tmp = path.with_suffix(path.suffix + ".opt.tmp")
+    try:
+        subprocess.run(
+            ["gifsicle", "-O3", str(path), "-o", str(tmp)],
+            check=True, capture_output=True,
+        )
+        tmp.replace(path)
+    except (subprocess.CalledProcessError, OSError):
+        if tmp.exists():
+            tmp.unlink()
+
+
+def _progress_iter(iterable, *, total, desc, enabled: bool = True):
+    if not enabled:
+        return iterable
     try:
         from tqdm.auto import tqdm
+
         return tqdm(iterable, total=total, desc=desc, unit="frame")
     except ImportError:
         return iterable
