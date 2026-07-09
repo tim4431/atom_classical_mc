@@ -3,8 +3,6 @@
 Geometry (all built from the general light-matter parts, no gMOT code
 in the library):
 
-- A hot oven emits a collimated Rb85 atomic beam (600 K, 2 mm diameter,
-  no Zeeman slower) traveling along +x through the trap center.
 - A single uniform (top-hat) MOT beam, 50 mm diameter, 120 mW,
   circularly polarized, propagates along -z — the quadrupole coil axis
   (the strong-gradient direction).
@@ -14,6 +12,12 @@ in the library):
   Handedness flips on diffraction, and each diffracted beam is confined
   to the sheared triangular prism defined by back-projecting onto its
   sector (`LaserBeam.profile`).
+- A hot oven below the chip emits a collimated Rb85 atomic beam (600 K,
+  2 mm diameter, no Zeeman slower) traveling along +z — head-on into
+  the incident MOT beam — through a small hole in the grating center.
+  The incident beam leaks through that hole as a downward pencil beam,
+  so incoming atoms are Doppler-slowed below the chip before they ever
+  reach the trap volume (through-hole loading).
 
 Local polarization projection: at every timestep, each beam's helicity
 is decomposed into sigma+ / pi / sigma- intensity fractions along the
@@ -30,21 +34,27 @@ below it simply see zero light (they are lost in practice and never
 counted as captured); the zeroth diffraction order and grating losses
 are absorbed into the per-sector efficiency.
 
-Two force imbalances shape the trajectories:
+Forces shaping the loading dynamics:
 
 - Static balance: the z-momentum flux ratio of diffracted to incident
   light is exactly `3 * eta` — the 1/cos(alpha) intensity compression
   of each diffracted beam cancels the cos(alpha) projection of its
   push. Only `eta = 1/3` balances; larger eta ejects slow atoms upward,
   smaller lets the incident beam press the cloud toward the chip.
-- Doppler tilt (why the incoming flux sags toward the chip): for an
-  atom crossing at ~20 m/s the incident beam is perpendicular to the
-  motion (no Doppler shift, full scattering rate, pushing down), while
-  the up-pushing diffracted beams with a co-propagating +x component
-  are Doppler-shifted ~1.5 Gamma out of resonance. The one diffracted
-  beam that is counter-propagating (and Doppler-enhanced) only exists
-  downstream of the trap center. Net: every fast atom is pushed toward
-  the chip while it approaches, independent of eta.
+- Axial slowing: a rising atom is head-on with the incident beam
+  (Doppler-enhanced, resonant near `v = |delta|/k` shifted up by the
+  Zeeman term, which grows with depth — a built-in Zeeman-slower ramp)
+  while the three diffracted beams co-propagate with it and are
+  Doppler-suppressed. On axis the transverse pushes of the three
+  diffracted beams cancel by symmetry.
+- Stall depth sets the chip position: at s0 ~ 4 the pencil beam is a
+  wall, not a gentle slower — every atom below the punch-through speed
+  (~45 m/s here) is driven to rest at the depth where the Zeeman shift
+  detunes the light at v = 0, `|z| ~ hbar(|delta| + Gamma/2) /
+  (mu_eff * 2b')` (~8.5 mm). If the chip is shallower than that, atoms
+  stall below the surface and are expelled back down the beamline
+  (capture ~ 0); if deeper, they stall inside the trap volume and are
+  captured with near-unity probability over the whole window.
 
 Because a 600 K beam is far faster than any MOT capture velocity, only
 the slow Boltzmann tail can be captured. The simulation samples the
@@ -99,13 +109,21 @@ GRADIENT_G_PER_CM = 5.0  # radial; axial (beam axis) is twice this
 # --- grating chip --------------------------------------------------------
 DEFLECTION_ALPHA_RAD = np.deg2rad(46.0)
 SECTOR_AZIMUTHS_RAD = np.deg2rad([0.0, 120.0, 240.0])
-DIFFRACTION_EFFICIENCY = 2.0 / 3.0  # power fraction into each +1 order
-CHIP_Z_M = -5.0e-3  # chip surface below the quadrupole zero
+# Power fraction into each sector's used +1 order. Radiation-pressure
+# balance requires 3 * eta = 1; other values give no stable trap.
+DIFFRACTION_EFFICIENCY = 1.0 / 3.0
+# Chip depth below the quadrupole zero. Must exceed the pencil-beam
+# stall depth |z| ~ hbar(|delta| + Gamma/2) / (mu_eff * 2b') (~8.5 mm
+# here): incoming atoms decelerate to rest at that depth, and only if
+# the stall point lies ABOVE the chip - inside the trap volume - are
+# they captured instead of falling back down the beamline.
+CHIP_Z_M = -12.0e-3
+GRATING_HOLE_RADIUS_M = 1.5e-3  # central hole passing the atomic beam
 
 # --- atomic beam ---------------------------------------------------------
 OVEN_TEMPERATURE_K = 600.0
-ATOM_BEAM_RADIUS_M = 1.0e-3  # 2 mm diameter, aimed through the trap center
-ATOM_BEAM_START_X_M = -30.0e-3
+ATOM_BEAM_RADIUS_M = 1.0e-3  # 2 mm diameter, aimed up the +z axis
+ATOM_BEAM_START_Z_M = -30.0e-3  # launch plane below the chip
 DIVERGENCE_HALF_ANGLE_RAD = 10.0e-3  # residual collimation spread
 
 
@@ -122,7 +140,11 @@ def build_beams(detuning_hz: float) -> list[LaserBeam]:
     def incident_profile(positions):
         pos = np.asarray(positions, dtype=float)
         rho = np.hypot(pos[..., 0], pos[..., 1])
-        return ((rho <= MOT_BEAM_RADIUS_M) & (pos[..., 2] >= CHIP_Z_M)).astype(float)
+        above_chip = (rho <= MOT_BEAM_RADIUS_M) & (pos[..., 2] >= CHIP_Z_M)
+        # The chip blocks the beam except for the central hole, which
+        # transmits a downward pencil beam into the atomic-beam path.
+        through_hole = (rho <= GRATING_HOLE_RADIUS_M) & (pos[..., 2] < CHIP_Z_M)
+        return (above_chip | through_hole).astype(float)
 
     beams = [
         LaserBeam(
@@ -173,7 +195,12 @@ def _sector_profile(direction: np.ndarray, phi_center_rad: float):
         rho = np.hypot(foot_x, foot_y)
         dphi = np.arctan2(foot_y, foot_x) - phi_center_rad
         dphi = (dphi + np.pi) % (2.0 * np.pi) - np.pi
-        inside = (t >= 0.0) & (rho <= MOT_BEAM_RADIUS_M) & (np.abs(dphi) <= np.pi / 3.0)
+        inside = (
+            (t >= 0.0)
+            & (rho <= MOT_BEAM_RADIUS_M)
+            & (rho >= GRATING_HOLE_RADIUS_M)  # no grating in the hole
+            & (np.abs(dphi) <= np.pi / 3.0)
+        )
         return inside.astype(float)
 
     return profile
@@ -193,51 +220,57 @@ def build_system(detuning_gamma: float) -> LightMatterSystem:
 
 
 def sample_oven_beam(
-    n_atoms: int, v_max: float, rng: np.random.Generator
+    n_atoms: int, v_min: float, v_max: float, rng: np.random.Generator
 ) -> tuple[np.ndarray, np.ndarray, float]:
-    """Sample the slow tail of the effusive beam.
+    """Sample a slow-velocity window of the effusive beam.
 
     Returns positions, velocities, and the fraction of the total beam
-    flux carried by the simulated window `v < v_max` (analytic:
-    `1 - exp(-u)(1 + u)` with `u = v_max^2 / 2 sigma^2` for the
-    `v^3 exp(-v^2/2 sigma^2)` flux distribution).
+    flux carried by the simulated window `v_min < v < v_max`. For the
+    `v^3 exp(-v^2/2 sigma^2)` flux distribution the cumulative fraction
+    below `v` is `F(v) = 1 - exp(-u)(1 + u)` with `u = v^2 / 2 sigma^2`.
     """
 
     sigma = np.sqrt(BOLTZMANN_CONSTANT_J_PER_K * OVEN_TEMPERATURE_K / SPECIES.mass_kg)
-    u = v_max**2 / (2.0 * sigma**2)
-    window_fraction = float(1.0 - np.exp(-u) * (1.0 + u))
 
-    # Rejection sampling of f(v) ~ v^3 exp(-v^2/2s^2) on (0, v_max]:
-    # envelope v^3 (inverse-CDF v_max * u^(1/4)), accept with the
-    # Gaussian factor (nearly 1 for v_max << sigma).
+    def flux_cdf(v: float) -> float:
+        u = v**2 / (2.0 * sigma**2)
+        return float(1.0 - np.exp(-u) * (1.0 + u))
+
+    window_fraction = flux_cdf(v_max) - flux_cdf(v_min)
+
+    # Rejection sampling of f(v) ~ v^3 exp(-v^2/2s^2) on [v_min, v_max]:
+    # envelope v^3 (inverse CDF of v^3 restricted to the window), accept
+    # with the Gaussian factor (nearly 1 for v_max << sigma).
     speeds = np.empty(0)
     while speeds.size < n_atoms:
-        candidates = v_max * rng.random(2 * n_atoms) ** 0.25
+        quantile = rng.random(2 * n_atoms)
+        candidates = (v_min**4 + quantile * (v_max**4 - v_min**4)) ** 0.25
         accept = rng.random(candidates.size) < np.exp(
             -(candidates**2) / (2.0 * sigma**2)
         )
         speeds = np.concatenate([speeds, candidates[accept]])
     speeds = speeds[:n_atoms]
 
-    # Transverse launch position: uniform disc aimed through the origin.
+    # Transverse launch position: uniform disc on the +z axis, below the
+    # chip, aimed up through the grating hole at the trap center.
     disc_phi = rng.uniform(0.0, 2.0 * np.pi, n_atoms)
     disc_r = ATOM_BEAM_RADIUS_M * np.sqrt(rng.random(n_atoms))
     positions = np.column_stack(
         [
-            np.full(n_atoms, ATOM_BEAM_START_X_M),
             disc_r * np.cos(disc_phi),
             disc_r * np.sin(disc_phi),
+            np.full(n_atoms, ATOM_BEAM_START_Z_M),
         ]
     )
 
-    # Residual divergence: velocity tilted by a small random angle.
+    # Residual divergence: velocity tilted by a small random angle off +z.
     theta = DIVERGENCE_HALF_ANGLE_RAD * np.sqrt(rng.random(n_atoms))
     tilt_phi = rng.uniform(0.0, 2.0 * np.pi, n_atoms)
     velocities = np.column_stack(
         [
-            speeds * np.cos(theta),
             speeds * np.sin(theta) * np.cos(tilt_phi),
             speeds * np.sin(theta) * np.sin(tilt_phi),
+            speeds * np.cos(theta),
         ]
     )
     return positions, velocities, window_fraction
@@ -272,23 +305,30 @@ def print_diagnostics(system: LightMatterSystem) -> None:
         f = system.mean_radiation_force(np.array([r]), np.zeros((1, 3)))[0]
         print(f"  {label}: F = ({f[0]:+.2e}, {f[1]:+.2e}, {f[2]:+.2e}) N")
 
-    print("\nDeceleration vs longitudinal velocity (atom at origin):")
-    print("  v_x [m/s]   a_x [km/s^2]")
-    for vx in (2.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0):
-        f = system.mean_radiation_force(np.zeros((1, 3)), np.array([[vx, 0.0, 0.0]]))[0]
-        print(f"  {vx:8.1f}   {f[0] / SPECIES.mass_kg / 1e3:+12.2f}")
+    print(
+        "\nAxial deceleration vs climb velocity "
+        "(in the pencil beam below the chip, and at the trap center):"
+    )
+    below = np.array([[0.0, 0.0, -15.0e-3]])
+    center = np.zeros((1, 3))
+    print("  v_z [m/s]   a_z(-15 mm) [km/s^2]   a_z(0) [km/s^2]")
+    for vz in (2.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0):
+        v = np.array([[0.0, 0.0, vz]])
+        a_below = system.mean_radiation_force(below, v)[0, 2] / SPECIES.mass_kg / 1e3
+        a_center = system.mean_radiation_force(center, v)[0, 2] / SPECIES.mass_kg / 1e3
+        print(f"  {vz:8.1f}   {a_below:+18.2f}   {a_center:+14.2f}")
     print()
 
 
 def _beams_figure(system: LightMatterSystem, save: bool) -> None:
     """Map the four beam volumes: counts and total saturation.
 
-    Left: how many beams illuminate each point of the vertical x-z plane
-    (y = 0, the plane of the atomic beam). Middle: the same count in the
-    horizontal x-y plane at the trap height, showing the three sector
-    prisms. Right: total saturation in x-z. The atomic beam enters along
-    z = 0 from the left; full radiation-pressure balance exists only
-    where all four beams overlap.
+    Left: how many beams illuminate each point of the vertical x-z
+    plane. Middle: the same count in the horizontal x-y plane at the
+    trap height, showing the three sector prisms. Right: total
+    saturation in x-z. The atomic beam climbs the +z axis from below,
+    through the pencil beam transmitted by the grating hole; full
+    radiation-pressure balance exists only where all four beams overlap.
     """
 
     import matplotlib
@@ -312,7 +352,7 @@ def _beams_figure(system: LightMatterSystem, save: bool) -> None:
         return count, total
 
     x_mm = np.linspace(-32.0, 32.0, 481)
-    z_mm = np.linspace(CHIP_Z_M * 1e3 - 3.0, 21.0, 241)
+    z_mm = np.linspace(ATOM_BEAM_START_Z_M * 1e3 - 1.0, 21.0, 361)
     y_mm = np.linspace(-30.0, 30.0, 451)
     count_xz, total_xz = sample_plane(x_mm * 1e-3, z_mm * 1e-3, "xz")
     count_xy, _ = sample_plane(x_mm * 1e-3, y_mm * 1e-3, "xy")
@@ -329,10 +369,12 @@ def _beams_figure(system: LightMatterSystem, save: bool) -> None:
     )
     axes[0].plot(0.0, 0.0, "r+", ms=12, mew=2)
     axes[0].annotate(
-        "", xy=(-14.0, 0.0), xytext=(-30.0, 0.0),
+        "", xy=(0.0, -14.0), xytext=(0.0, -28.0),
         arrowprops=dict(arrowstyle="-|>", color="w", lw=1.8),
     )
-    axes[0].annotate("atomic beam", (-30.0, 1.0), color="w", fontsize=9)
+    axes[0].annotate(
+        "atomic beam\n(through hole)", (2.5, -26.0), color="w", fontsize=9
+    )
     axes[0].annotate(
         "", xy=(0.0, 13.0), xytext=(0.0, 19.5),
         arrowprops=dict(arrowstyle="-|>", color="#ff5050", lw=2.0),
@@ -361,8 +403,9 @@ def _beams_figure(system: LightMatterSystem, save: bool) -> None:
         x_mm, y_mm, count_xy, cmap=count_cmap, vmin=-0.5, vmax=4.5, shading="auto"
     )
     axes[1].plot(0.0, 0.0, "r+", ms=12, mew=2)
-    axes[1].axhline(0.0, color="w", lw=0.8, ls="--", alpha=0.6)
-    axes[1].annotate("atomic beam path", (-31.0, 1.5), color="w", fontsize=9)
+    axes[1].annotate(
+        "atomic beam\n(out of page)", (2.0, 2.0), color="w", fontsize=9
+    )
     axes[1].set_xlabel("x [mm]")
     axes[1].set_ylabel("y [mm]")
     axes[1].set_title("Beams per point, x-y plane (z = 0)")
@@ -390,10 +433,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--atoms", type=int, default=250)
     parser.add_argument(
+        "--vmin",
+        type=float,
+        default=0.0,
+        help="lower edge of the simulated velocity window [m/s]",
+    )
+    parser.add_argument(
         "--vmax",
         type=float,
-        default=30.0,
-        help="upper edge of the simulated slow-velocity window [m/s]",
+        default=55.0,
+        help="upper edge of the simulated velocity window [m/s]",
     )
     parser.add_argument("--duration-ms", type=float, default=30.0)
     parser.add_argument("--detuning-gamma", type=float, default=DETUNING_GAMMA)
@@ -433,7 +482,7 @@ def main() -> None:
         return
     rng = np.random.default_rng(args.seed)
     positions, velocities, window_fraction = sample_oven_beam(
-        args.atoms, args.vmax, rng
+        args.atoms, args.vmin, args.vmax, rng
     )
 
     s_inc = incident_saturation()
@@ -457,7 +506,7 @@ def main() -> None:
     note = "" if abs(balance - 1.0) < 0.05 else "  <-- UNBALANCED, no stable trap"
     print(f"  z-momentum balance  : 3*eta = {balance:.2f} (1.00 = balanced){note}")
     print(
-        f"  simulated window    : v < {args.vmax:.0f} m/s = "
+        f"  simulated window    : {args.vmin:.0f} < v < {args.vmax:.0f} m/s = "
         f"{window_fraction:.2e} of the beam flux\n"
     )
 
@@ -547,9 +596,9 @@ def _render_gif(result, system: LightMatterSystem) -> None:
         plane="xz",
         beams=system.beams,
         doppler_limit_uK=system.species.doppler_temperature_uK,
-        # Asymmetric window: keep the grating chip (z = -10 mm) and the
-        # incoming beam path in view rather than auto-centering.
-        extent_mm=(-32.0, 32.0, -13.0, 18.0),
+        # Asymmetric window: keep the grating chip and the atomic-beam
+        # climb from below in view rather than auto-centering.
+        extent_mm=(-22.0, 22.0, ATOM_BEAM_START_Z_M * 1e3 - 1.0, 20.0),
         n_frames=80,
         fps=16,
         dpi=85,
@@ -566,12 +615,15 @@ def _plot(result, captured, save: bool, show: bool = False) -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.2))
 
-    # x-z trajectories with the chip and grating sketch. Atoms that hit
-    # the chip are not propagated as a physical collision (they only see
-    # zero light below it), so clip their trajectories at the surface.
+    # x-z trajectories with the chip sketch. The chip is not a physical
+    # barrier in the model, so clip an atom's trace once it is below the
+    # surface while outside the hole (i.e. once it has hit the chip).
     traj_mm = result.trajectory_positions_m.copy() * 1e3
-    below = np.cumsum(traj_mm[:, :, 2] < CHIP_Z_M * 1e3, axis=0) > 0
-    traj_mm[below] = np.nan
+    rho_mm = np.hypot(traj_mm[:, :, 0], traj_mm[:, :, 1])
+    hit_chip = (traj_mm[:, :, 2] < CHIP_Z_M * 1e3) & (
+        rho_mm > GRATING_HOLE_RADIUS_M * 1e3
+    )
+    traj_mm[np.cumsum(hit_chip, axis=0) > 0] = np.nan
     n_atoms = traj_mm.shape[1]
     for atom in range(n_atoms):
         color = "C1" if captured[atom] else "C0"
@@ -579,10 +631,12 @@ def _plot(result, captured, save: bool, show: bool = False) -> None:
         axes[0].plot(
             traj_mm[:, atom, 0], traj_mm[:, atom, 2], lw=0.6, color=color, alpha=alpha
         )
-    axes[0].axhline(CHIP_Z_M * 1e3, color="k", lw=2)
+    hole_mm = GRATING_HOLE_RADIUS_M * 1e3
+    axes[0].plot([-22, -hole_mm], [CHIP_Z_M * 1e3] * 2, "k-", lw=2)
+    axes[0].plot([hole_mm, 22], [CHIP_Z_M * 1e3] * 2, "k-", lw=2)
     axes[0].plot(0.0, 0.0, "r+", ms=10)
-    axes[0].set_xlim(-32, 32)
-    axes[0].set_ylim(-14, 20)
+    axes[0].set_xlim(-22, 22)
+    axes[0].set_ylim(ATOM_BEAM_START_Z_M * 1e3 - 1.0, 20)
     axes[0].set_xlabel("x [mm]")
     axes[0].set_ylabel("z [mm]")
     axes[0].set_title("Trajectories (orange = captured)")
