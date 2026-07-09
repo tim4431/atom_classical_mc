@@ -42,6 +42,7 @@ Run from the repository root:
     python3 example/mot/mmwave_mot.py
     python3 example/mot/mmwave_mot.py --atoms 500 --vmax 35
     python3 example/mot/mmwave_mot.py --save-plot
+    python3 example/mot/mmwave_mot.py --gif   # animated capture GIF
 """
 
 from __future__ import annotations
@@ -77,7 +78,7 @@ MOT_BEAM_RADIUS_M = 25.0e-3  # 50 mm diameter, uniform top-hat
 MOT_BEAM_POWER_W = 120.0e-3
 DETUNING_GAMMA = -1.5  # laser detuning in units of Gamma
 INCIDENT_HELICITY = -1.0  # circular; sign must match the coil polarity
-GRADIENT_G_PER_CM = 8.0  # radial; axial (beam axis) is twice this
+GRADIENT_G_PER_CM = 5.0  # radial; axial (beam axis) is twice this
 
 # --- grating chip --------------------------------------------------------
 DEFLECTION_ALPHA_RAD = np.deg2rad(46.0)
@@ -156,11 +157,7 @@ def _sector_profile(direction: np.ndarray, phi_center_rad: float):
         rho = np.hypot(foot_x, foot_y)
         dphi = np.arctan2(foot_y, foot_x) - phi_center_rad
         dphi = (dphi + np.pi) % (2.0 * np.pi) - np.pi
-        inside = (
-            (t >= 0.0)
-            & (rho <= MOT_BEAM_RADIUS_M)
-            & (np.abs(dphi) <= np.pi / 3.0)
-        )
+        inside = (t >= 0.0) & (rho <= MOT_BEAM_RADIUS_M) & (np.abs(dphi) <= np.pi / 3.0)
         return inside.astype(float)
 
     return profile
@@ -190,9 +187,7 @@ def sample_oven_beam(
     `v^3 exp(-v^2/2 sigma^2)` flux distribution).
     """
 
-    sigma = np.sqrt(
-        BOLTZMANN_CONSTANT_J_PER_K * OVEN_TEMPERATURE_K / SPECIES.mass_kg
-    )
+    sigma = np.sqrt(BOLTZMANN_CONSTANT_J_PER_K * OVEN_TEMPERATURE_K / SPECIES.mass_kg)
     u = v_max**2 / (2.0 * sigma**2)
     window_fraction = float(1.0 - np.exp(-u) * (1.0 + u))
 
@@ -264,9 +259,7 @@ def print_diagnostics(system: LightMatterSystem) -> None:
     print("\nDeceleration vs longitudinal velocity (atom at origin):")
     print("  v_x [m/s]   a_x [km/s^2]")
     for vx in (2.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0):
-        f = system.mean_radiation_force(
-            np.zeros((1, 3)), np.array([[vx, 0.0, 0.0]])
-        )[0]
+        f = system.mean_radiation_force(np.zeros((1, 3)), np.array([[vx, 0.0, 0.0]]))[0]
         print(f"  {vx:8.1f}   {f[0] / SPECIES.mass_kg / 1e3:+12.2f}")
     print()
 
@@ -285,6 +278,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--plot", action="store_true")
     parser.add_argument("--save-plot", action="store_true")
+    parser.add_argument(
+        "--gif",
+        action="store_true",
+        help="render an animated GIF of the capture next to this script",
+    )
     args = parser.parse_args()
 
     system = build_system(args.detuning_gamma)
@@ -297,15 +295,23 @@ def main() -> None:
     print("Grating MOT loading from a hot effusive beam")
     print(f"  species             : {SPECIES.name}")
     print(f"  oven temperature    : {OVEN_TEMPERATURE_K:.0f} K")
-    print(f"  incident saturation : s0 = {s_inc:.2f} "
-          f"({MOT_BEAM_POWER_W * 1e3:.0f} mW over {2 * MOT_BEAM_RADIUS_M * 1e3:.0f} mm)")
+    print(
+        f"  incident saturation : s0 = {s_inc:.2f} "
+        f"({MOT_BEAM_POWER_W * 1e3:.0f} mW over {2 * MOT_BEAM_RADIUS_M * 1e3:.0f} mm)"
+    )
     print(f"  detuning            : {args.detuning_gamma:+.1f} Gamma")
-    print(f"  gradient            : {GRADIENT_G_PER_CM:.0f} G/cm radial "
-          f"({2 * GRADIENT_G_PER_CM:.0f} G/cm along the beam axis)")
-    print(f"  deflection angle    : {np.rad2deg(DEFLECTION_ALPHA_RAD):.0f} deg, "
-          f"efficiency {DIFFRACTION_EFFICIENCY:.2f}/sector")
-    print(f"  simulated window    : v < {args.vmax:.0f} m/s = "
-          f"{window_fraction:.2e} of the beam flux\n")
+    print(
+        f"  gradient            : {GRADIENT_G_PER_CM:.0f} G/cm radial "
+        f"({2 * GRADIENT_G_PER_CM:.0f} G/cm along the beam axis)"
+    )
+    print(
+        f"  deflection angle    : {np.rad2deg(DEFLECTION_ALPHA_RAD):.0f} deg, "
+        f"efficiency {DIFFRACTION_EFFICIENCY:.2f}/sector"
+    )
+    print(
+        f"  simulated window    : v < {args.vmax:.0f} m/s = "
+        f"{window_fraction:.2e} of the beam flux\n"
+    )
 
     print_diagnostics(system)
 
@@ -334,10 +340,14 @@ def main() -> None:
     capture_probability = n_captured / args.atoms
 
     print("Results")
-    print(f"  captured atoms          : {n_captured} / {args.atoms} "
-          f"(p = {capture_probability:.3f} within the window)")
-    print(f"  absolute capture fraction of beam flux: "
-          f"{capture_probability * window_fraction:.2e}")
+    print(
+        f"  captured atoms          : {n_captured} / {args.atoms} "
+        f"(p = {capture_probability:.3f} within the window)"
+    )
+    print(
+        f"  absolute capture fraction of beam flux: "
+        f"{capture_probability * window_fraction:.2e}"
+    )
     if n_captured > 0:
         initial_speeds = np.linalg.norm(result.initial_velocities_m_per_s, axis=-1)
         v_cap = initial_speeds[captured]
@@ -352,20 +362,51 @@ def main() -> None:
             * 1e6
         )
         cloud_rms_mm = float(
-            np.sqrt(
-                np.mean(np.sum(result.final_positions_m[captured] ** 2, axis=-1))
-            )
+            np.sqrt(np.mean(np.sum(result.final_positions_m[captured] ** 2, axis=-1)))
             * 1e3
         )
-        print(f"  captured initial speeds : {np.min(v_cap):.1f} - "
-              f"{np.max(v_cap):.1f} m/s (mean {np.mean(v_cap):.1f})")
-        print(f"  captured cloud          : T = {temp_uK:.0f} uK, "
-              f"rms radius {cloud_rms_mm:.2f} mm")
-        print(f"  mean photons (captured) : "
-              f"{float(np.mean(result.scattered_photons[captured])):.0f}")
+        print(
+            f"  captured initial speeds : {np.min(v_cap):.1f} - "
+            f"{np.max(v_cap):.1f} m/s (mean {np.mean(v_cap):.1f})"
+        )
+        print(
+            f"  captured cloud          : T = {temp_uK:.0f} uK, "
+            f"rms radius {cloud_rms_mm:.2f} mm"
+        )
+        print(
+            f"  mean photons (captured) : "
+            f"{float(np.mean(result.scattered_photons[captured])):.0f}"
+        )
 
     if args.plot or args.save_plot:
         _plot(result, captured, args.save_plot)
+
+    if args.gif:
+        _render_gif(result, system)
+
+
+def _render_gif(result, system: LightMatterSystem) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from src.visualization import render_cloud_animation
+
+    out = os.path.join(HERE, "mmwave_mot_capture.gif")
+    render_cloud_animation(
+        result,
+        out,
+        mass_kg=system.species.mass_kg,
+        plane="xz",
+        beams=system.beams,
+        doppler_limit_uK=system.species.doppler_temperature_uK,
+        # Asymmetric window: keep the grating chip (z = -10 mm) and the
+        # incoming beam path in view rather than auto-centering.
+        extent_mm=(-32.0, 32.0, -13.0, 18.0),
+        n_frames=80,
+        fps=16,
+        dpi=85,
+    )
+    print(f"\nSaved GIF to {out}")
 
 
 def _plot(result, captured, save: bool) -> None:
@@ -387,8 +428,9 @@ def _plot(result, captured, save: bool) -> None:
     for atom in range(n_atoms):
         color = "C1" if captured[atom] else "C0"
         alpha = 0.9 if captured[atom] else 0.15
-        axes[0].plot(traj_mm[:, atom, 0], traj_mm[:, atom, 2], lw=0.6,
-                     color=color, alpha=alpha)
+        axes[0].plot(
+            traj_mm[:, atom, 0], traj_mm[:, atom, 2], lw=0.6, color=color, alpha=alpha
+        )
     axes[0].axhline(CHIP_Z_M * 1e3, color="k", lw=2)
     axes[0].plot(0.0, 0.0, "r+", ms=10)
     axes[0].set_xlim(-32, 32)
