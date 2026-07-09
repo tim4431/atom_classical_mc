@@ -13,6 +13,7 @@ Run from the repository root:
     python3 example/mot/rb85_mot.py
     python3 example/mot/rb85_mot.py --backend rate-equation
     python3 example/mot/rb85_mot.py --plot          # or --save-plot
+    python3 example/mot/rb85_mot.py --gif           # animated cloud GIF
 
 Prints capture fraction, temperature evolution, cloud size, and photon
 scattering statistics.
@@ -60,9 +61,7 @@ def build_system() -> LightMatterSystem:
     quadrupole = QuadrupoleMagneticField(
         gradient_T_per_m=float(gauss_per_cm(10.0))  # 10 G/cm radial
     )
-    return LightMatterSystem(
-        species=species, beams=beams, magnetic_fields=[quadrupole]
-    )
+    return LightMatterSystem(species=species, beams=beams, magnetic_fields=[quadrupole])
 
 
 def build_config(seed: int) -> SimulationConfig:
@@ -70,8 +69,8 @@ def build_config(seed: int) -> SimulationConfig:
         initial_temperature_uK=3000.0,  # 3 mK cloud, e.g. post-slowing
         initial_cloud_sigma_m=1.0e-3,  # 1 mm rms
         initial_mean_velocity_m_per_s=(1.0, 0.0, 0.0),  # slow drift
-        timestep_s=2.0e-7,
-        duration_s=float(ms(20.0)),
+        timestep_s=5.0e-8,
+        duration_s=float(ms(5.0)),
         ensemble_size=400,
         mass_kg=RB85_D2.mass_kg,
         loss_radius_m=8.0e-3,  # atoms leaving the beam volume are lost
@@ -95,6 +94,11 @@ def main() -> None:
         "--save-plot",
         action="store_true",
         help="save summary figure next to this script",
+    )
+    parser.add_argument(
+        "--gif",
+        action="store_true",
+        help="render an animated GIF of the cooling cloud next to this script",
     )
     args = parser.parse_args()
 
@@ -133,8 +137,7 @@ def main() -> None:
     print(f"Final temperature     : {temperatures_uK[-1]:8.1f} uK")
     print(f"Cloud rms radius      : {initial_rms_mm:6.2f} mm -> {final_rms_mm:6.2f} mm")
     print(
-        "Mean scattered photons: "
-        f"{float(np.mean(result.scattered_photons)):10.0f}"
+        "Mean scattered photons: " f"{float(np.mean(result.scattered_photons)):10.0f}"
     )
     print(
         "Mean excited fraction : "
@@ -152,6 +155,30 @@ def main() -> None:
 
     if args.plot or args.save_plot:
         _plot(result, temperatures_uK, args.save_plot)
+
+    if args.gif:
+        _render_gif(result, system)
+
+
+def _render_gif(result, system) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from src.visualization import render_cloud_animation
+
+    out = os.path.join(HERE, "rb85_mot_cloud.gif")
+    render_cloud_animation(
+        result,
+        out,
+        mass_kg=system.species.mass_kg,
+        plane="xz",
+        beams=system.beams,
+        doppler_limit_uK=system.species.doppler_temperature_uK,
+        n_frames=80,
+        fps=16,
+        dpi=85,
+    )
+    print(f"\nSaved GIF to {out}")
 
 
 def _plot(result, temperatures_uK, save: bool) -> None:

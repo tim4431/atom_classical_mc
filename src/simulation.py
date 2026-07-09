@@ -37,6 +37,12 @@ class SimulationConfig:
     required when there are no traps (pure light-force runs) and useful
     for capture studies. `initial_mean_velocity_m_per_s` adds a drift to
     the Maxwell-Boltzmann velocities (e.g. launched atoms).
+
+    For full control, pass explicit `initial_positions_m` and/or
+    `initial_velocities_m_per_s_array` (shape `(ensemble_size, 3)`);
+    each overrides the corresponding sampler (e.g. an effusive-beam
+    flux distribution instead of a thermal cloud). Explicit ensembles
+    cannot be resampled, so they require `reject_initially_lost=False`.
     """
 
     initial_temperature_uK: float
@@ -50,6 +56,8 @@ class SimulationConfig:
     initial_center_m: ArrayLike | None = None
     initial_cloud_sigma_m: ArrayLike | None = None
     initial_mean_velocity_m_per_s: ArrayLike = (0.0, 0.0, 0.0)
+    initial_positions_m: ArrayLike | None = None
+    initial_velocities_m_per_s_array: ArrayLike | None = None
     reject_initially_lost: bool = True
     max_initial_resampling_rounds: int = 100
     store_trajectories: bool = False
@@ -99,6 +107,25 @@ class SimulationConfig:
         if mean_velocity.shape != (3,):
             raise ValueError("initial_mean_velocity_m_per_s must be a 3-vector.")
         object.__setattr__(self, "initial_mean_velocity_m_per_s", mean_velocity)
+
+        explicit = False
+        for attr in ("initial_positions_m", "initial_velocities_m_per_s_array"):
+            value = getattr(self, attr)
+            if value is None:
+                continue
+            array = np.asarray(value, dtype=float)
+            if array.shape != (self.ensemble_size, 3):
+                raise ValueError(
+                    f"{attr} must have shape (ensemble_size, 3) = "
+                    f"({self.ensemble_size}, 3); got {array.shape}."
+                )
+            object.__setattr__(self, attr, array)
+            explicit = True
+        if explicit and self.reject_initially_lost:
+            raise ValueError(
+                "Explicit initial ensembles cannot be resampled; set "
+                "reject_initially_lost=False."
+            )
 
 
 @dataclass(frozen=True)
@@ -509,12 +536,15 @@ def _sample_initial_ensemble(
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Sample initial positions and velocities per the config.
 
-    Positions: free Gaussian cloud if `initial_cloud_sigma_m` is set,
-    otherwise the local harmonic approximation of the traps.
-    Velocities: Maxwell-Boltzmann plus the configured mean drift.
+    Positions: explicit array if given, else a free Gaussian cloud if
+    `initial_cloud_sigma_m` is set, otherwise the local harmonic
+    approximation of the traps. Velocities: explicit array if given,
+    else Maxwell-Boltzmann plus the configured mean drift.
     """
 
-    if config.initial_cloud_sigma_m is not None:
+    if config.initial_positions_m is not None:
+        positions = np.array(config.initial_positions_m, dtype=float, copy=True)
+    elif config.initial_cloud_sigma_m is not None:
         center = (
             config.initial_center_m
             if config.initial_center_m is not None
@@ -533,14 +563,19 @@ def _sample_initial_ensemble(
     else:
         raise ValueError(
             "Without traps, initial positions cannot come from a trap Hessian; "
-            "set SimulationConfig.initial_cloud_sigma_m."
+            "set SimulationConfig.initial_cloud_sigma_m or initial_positions_m."
         )
-    velocities = (
-        sample_thermal_velocities(
-            config.initial_temperature_uK, count, rng, mass_kg=config.mass_kg
+    if config.initial_velocities_m_per_s_array is not None:
+        velocities = np.array(
+            config.initial_velocities_m_per_s_array, dtype=float, copy=True
         )
-        + config.initial_mean_velocity_m_per_s
-    )
+    else:
+        velocities = (
+            sample_thermal_velocities(
+                config.initial_temperature_uK, count, rng, mass_kg=config.mass_kg
+            )
+            + config.initial_mean_velocity_m_per_s
+        )
     return positions, velocities
 
 

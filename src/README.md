@@ -48,8 +48,8 @@ Compact one-line descriptions of functions, classes, and methods in the local
 
 ## `laser.py`
 
-- `LaserBeam`: Collimated traveling-wave beam: direction, detuning, saturation `s0`, helicity, optional Gaussian waist.
-- `LaserBeam.saturation_at`: Local saturation parameter with the transverse Gaussian profile applied.
+- `LaserBeam`: Collimated traveling-wave beam: direction, detuning, saturation `s0`, helicity, optional Gaussian waist, optional arbitrary intensity `profile` callable (apertures, grating-sector prisms, shadows).
+- `LaserBeam.saturation_at`: Local saturation parameter with the Gaussian waist and/or custom profile applied.
 - `six_beam_mot`: Build the standard three-axis retro-reflected MOT beam set with correct helicities.
 
 ## `light_matter.py`
@@ -80,7 +80,7 @@ Compact one-line descriptions of functions, classes, and methods in the local
 
 ## `simulation.py`
 
-- `SimulationConfig.__post_init__`: Validate simulation parameters and normalize vector fields.
+- `SimulationConfig.__post_init__`: Validate simulation parameters and normalize vector fields. Initial ensembles: trap-Hessian sampling (default), free Gaussian cloud (`initial_cloud_sigma_m` + `initial_mean_velocity_m_per_s`), or explicit arrays (`initial_positions_m` / `initial_velocities_m_per_s_array`, require `reject_initially_lost=False`).
 - `SimulationResult.final_temperature_uK`: Property returning survivors-only final temperature (alias).
 - `SimulationResult.temperature_gain_uK`: Property returning survivors-only temperature gain (alias).
 - `SimulationResult.temperature_gain_uK_at`: Method returning temperature gain for survivors or the full ensemble.
@@ -127,3 +127,5 @@ Compact one-line descriptions of functions, classes, and methods in the local
 - `draw_traps_2d`, `draw_atoms_2d`, `draw_tweezer_beams_3d`, `draw_tweezer_beam_side_2d`,
   `draw_trap_ellipsoids_3d`, `draw_atoms_3d`, `draw_atom_trails_2d`, `draw_frame`,
   `render_animation`: lower-level frame and animation helpers.
+- `draw_cloud_frame`: Snapshot of a trap-free scattering run — speed-colored cloud plus cooling curve.
+- `render_cloud_animation`: Stitch `draw_cloud_frame`s into a GIF/WEBP/APNG for MOT-style runs.

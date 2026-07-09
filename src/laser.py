@@ -22,6 +22,7 @@ gradient is `-2 b'` along `axis` (see `QuadrupoleMagneticField`).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -40,6 +41,12 @@ class LaserBeam:
       a uniform plane wave (infinite aperture).
     - `center_m`: a point on the beam axis (only the transverse offset
       relative to this point matters for the Gaussian profile).
+    - `profile`: optional dimensionless intensity profile
+      `profile(positions_m) -> array` (leading shape of the input)
+      multiplied onto the saturation. Use it for beams that are not
+      Gaussian/uniform: apertured top-hats, diffracted grating-sector
+      beams, shadowed regions, etc. Composes with `waist_m` if both are
+      given.
     """
 
     direction: ArrayLike = (0.0, 0.0, 1.0)
@@ -48,6 +55,7 @@ class LaserBeam:
     helicity: float = 0.0
     waist_m: float | None = None
     center_m: ArrayLike = (0.0, 0.0, 0.0)
+    profile: Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None
     name: str = "beam"
 
     def __post_init__(self) -> None:
@@ -80,12 +88,16 @@ class LaserBeam:
         if positions.shape[-1:] != (3,):
             raise ValueError("positions must have final dimension 3.")
         if self.waist_m is None:
-            return np.full(positions.shape[:-1], float(self.saturation))
-        offsets = positions - self.center_m
-        axial = np.sum(offsets * self.direction, axis=-1, keepdims=True)
-        radial = offsets - axial * self.direction
-        rho_sq = np.sum(radial * radial, axis=-1)
-        return self.saturation * np.exp(-2.0 * rho_sq / (self.waist_m**2))
+            saturation = np.full(positions.shape[:-1], float(self.saturation))
+        else:
+            offsets = positions - self.center_m
+            axial = np.sum(offsets * self.direction, axis=-1, keepdims=True)
+            radial = offsets - axial * self.direction
+            rho_sq = np.sum(radial * radial, axis=-1)
+            saturation = self.saturation * np.exp(-2.0 * rho_sq / (self.waist_m**2))
+        if self.profile is not None:
+            saturation = saturation * np.asarray(self.profile(positions), dtype=float)
+        return saturation
 
 
 def six_beam_mot(

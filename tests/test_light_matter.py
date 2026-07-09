@@ -117,6 +117,75 @@ class LaserBeamTests(unittest.TestCase):
         np.testing.assert_allclose(total, np.zeros(3), atol=1e-12)
 
 
+class BeamProfileTests(unittest.TestCase):
+    def test_profile_multiplies_saturation(self):
+        def upper_half(positions):
+            return (np.asarray(positions)[..., 2] > 0.0).astype(float)
+
+        beam = LaserBeam(direction=(0.0, 0.0, 1.0), saturation=2.0, profile=upper_half)
+        s = beam.saturation_at(np.array([[0.0, 0.0, 1.0], [0.0, 0.0, -1.0]]))
+        np.testing.assert_allclose(s, [2.0, 0.0])
+
+    def test_profile_composes_with_waist(self):
+        def half_intensity(positions):
+            return np.full(np.asarray(positions).shape[:-1], 0.5)
+
+        beam = LaserBeam(
+            direction=(0.0, 0.0, 1.0),
+            saturation=4.0,
+            waist_m=1.0e-2,
+            profile=half_intensity,
+        )
+        at_waist = beam.saturation_at(np.array([1.0e-2, 0.0, 0.0]))
+        self.assertAlmostEqual(float(at_waist), 0.5 * 4.0 * np.exp(-2.0), places=10)
+
+
+class ExplicitInitialStateTests(unittest.TestCase):
+    def _trap(self):
+        return GaussianTrap(
+            waist_radial_m=float(um(1.0)),
+            waist_axial_m=float(um(5.0)),
+            depth_uK=500.0,
+        )
+
+    def test_explicit_arrays_used_verbatim(self):
+        positions = np.array([[0.0, 0.0, 0.0], [1.0e-7, 0.0, 0.0]])
+        velocities = np.array([[0.0, 0.0, 0.0], [0.01, 0.0, 0.0]])
+        config = SimulationConfig(
+            initial_temperature_uK=0.0,
+            timestep_s=1.0e-7,
+            duration_s=5.0e-7,
+            ensemble_size=2,
+            initial_positions_m=positions,
+            initial_velocities_m_per_s_array=velocities,
+            reject_initially_lost=False,
+        )
+        result = run_simulation(self._trap(), config)
+        np.testing.assert_allclose(result.initial_positions_m, positions)
+        np.testing.assert_allclose(result.initial_velocities_m_per_s, velocities)
+
+    def test_explicit_requires_no_resampling(self):
+        with self.assertRaises(ValueError):
+            SimulationConfig(
+                initial_temperature_uK=0.0,
+                timestep_s=1.0e-7,
+                duration_s=1.0e-6,
+                ensemble_size=1,
+                initial_positions_m=np.zeros((1, 3)),
+            )
+
+    def test_explicit_shape_validation(self):
+        with self.assertRaises(ValueError):
+            SimulationConfig(
+                initial_temperature_uK=0.0,
+                timestep_s=1.0e-7,
+                duration_s=1.0e-6,
+                ensemble_size=3,
+                initial_positions_m=np.zeros((2, 3)),
+                reject_initially_lost=False,
+            )
+
+
 class PolarizationTests(unittest.TestCase):
     def test_fractions_sum_to_one(self):
         cos_theta = np.linspace(-1.0, 1.0, 21)

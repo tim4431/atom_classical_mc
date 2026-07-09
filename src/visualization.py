@@ -12,10 +12,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .analysis import (
+    kinetic_temperature_time_series_uK,
     loss_probability_time_series,
     mean_kinetic_energy_time_series_uK,
 )
+from .constants import RB87_MASS_KG
 from .harmonic import MotionalDecomposition
+from .laser import LaserBeam
 from .ramp import RampSequence
 from .simulation import SimulationResult
 from .trap import TrapConfig, total_potential
@@ -1145,6 +1148,269 @@ def render_animation(
                 vmin_uK=vmin_uK, depth_reference_uK=depth_reference_uK,
                 show_trails=show_trails, trail_samples=trail_samples,
                 figsize=figsize,
+            )
+            frame_path = os.path.join(tmpdir, f"frame_{k:05d}.png")
+            figure.savefig(frame_path, dpi=dpi, facecolor="white")
+            plt.close(figure)
+            images.append(Image.open(frame_path).convert("RGB").copy())
+
+        _save_animation(images, out, fps=fps)
+
+    return out
+
+
+# --- trap-free cloud rendering (light-force / MOT runs) --------------------
+#
+# `draw_frame` / `render_animation` above are built around tweezers: they
+# draw trap potentials and beam envelopes for `TrapConfig`s. Scattering-only
+# runs (a MOT, a molasses) have no traps — the interesting picture is the
+# cloud itself: atom positions colored by speed, next to the cooling curve.
+
+
+def _cloud_extent_mm(
+    result: SimulationResult, plane: FramePlane
+) -> tuple[float, float, float, float]:
+    """Bounding box in mm covering every stored atom position on `plane`.
+
+    Symmetric about the origin (the MOT / quadrupole center), so the cloud
+    sits centered and beam arrows aim at the field zero.
+    """
+    horiz_name, vert_name, _ = _PLANE_AXES[plane]
+    positions_mm = np.asarray(result.trajectory_positions_m, dtype=float) * 1.0e3
+    finite = positions_mm[np.all(np.isfinite(positions_mm), axis=-1)]
+    if finite.size == 0:
+        return -1.0, 1.0, -1.0, 1.0
+    half = 1.08 * np.maximum(np.abs(finite.min(axis=0)), np.abs(finite.max(axis=0)))
+    half = np.where(half > 0, half, 1.0)
+    h_axis = _AXIS_INDEX[horiz_name]
+    v_axis = _AXIS_INDEX[vert_name]
+    return (
+        -float(half[h_axis]), float(half[h_axis]),
+        -float(half[v_axis]), float(half[v_axis]),
+    )
+
+
+def _draw_beam_arrows_2d(
+    ax,
+    beams: Iterable[LaserBeam],
+    plane: FramePlane,
+    extent_mm: tuple[float, float, float, float],
+    *,
+    color: str = "#ff5050",
+) -> None:
+    """Draw an inward arrow at the frame edge for each in-plane beam."""
+    horiz_name, vert_name, depth_name = _PLANE_AXES[plane]
+    h_axis = _AXIS_INDEX[horiz_name]
+    v_axis = _AXIS_INDEX[vert_name]
+    d_axis = _AXIS_INDEX[depth_name]
+    h_mid = 0.5 * (extent_mm[0] + extent_mm[1])
+    v_mid = 0.5 * (extent_mm[2] + extent_mm[3])
+    half_h = 0.5 * (extent_mm[1] - extent_mm[0])
+    half_v = 0.5 * (extent_mm[3] - extent_mm[2])
+
+    for beam in beams:
+        direction = np.asarray(beam.direction, dtype=float)
+        if abs(direction[d_axis]) > 0.2:
+            continue  # points out of the drawn plane
+        dh, dv = direction[h_axis], direction[v_axis]
+        # The beam enters from the -direction side and propagates inward.
+        tail = (h_mid - 0.88 * dh * half_h, v_mid - 0.88 * dv * half_v)
+        head = (h_mid - 0.60 * dh * half_h, v_mid - 0.60 * dv * half_v)
+        ax.annotate(
+            "",
+            xy=head,
+            xytext=tail,
+            arrowprops=dict(arrowstyle="-|>", color=color, lw=1.6, alpha=0.85),
+            zorder=6,
+        )
+
+
+def draw_cloud_frame(
+    t: float,
+    result: SimulationResult,
+    *,
+    mass_kg: float = RB87_MASS_KG,
+    plane: FramePlane = "xz",
+    beams: Iterable[LaserBeam] | None = None,
+    extent_mm: tuple[float, float, float, float] | None = None,
+    speed_vmax_m_per_s: float | None = None,
+    temperatures_uK: NDArray[np.float64] | None = None,
+    doppler_limit_uK: float | None = None,
+    cmap: str = "viridis",
+    figsize: tuple[float, float] | None = None,
+    title: str | None = None,
+):
+    """Render one snapshot of a trap-free (scattering) run at time `t`.
+
+    Left panel: atom positions on `plane` in mm, colored by speed on a fixed
+    sequential scale (lost atoms in gray); optional inward arrows for every
+    `LaserBeam` lying in the plane. Right panel: the kinetic-temperature
+    time series with a cursor at `t`, plus an optional Doppler-limit line.
+
+    `extent_mm`, `speed_vmax_m_per_s`, and `temperatures_uK` default to
+    values computed from the stored trajectories; pass explicit values (as
+    `render_cloud_animation` does) to keep axes, colors, and the cooling
+    curve fixed across frames. `t` snaps to the nearest stored snapshot.
+    Returns (figure, [cloud_axis, temperature_axis]).
+    """
+    try:
+        import matplotlib.pyplot as plt
+        from matplotlib import cm, colors
+    except ImportError as exc:
+        raise ImportError(
+            "Matplotlib is required for plotting. Install with `pip install .[viz]`."
+        ) from exc
+
+    positions_m, velocities, lost = _interpolate_trajectory_state(result, t)
+    times = np.asarray(result.trajectory_times_s, dtype=float)
+    end_index = int(np.argmin(np.abs(times - float(t))))
+
+    if temperatures_uK is None:
+        temperatures_uK = kinetic_temperature_time_series_uK(result, mass_kg=mass_kg)
+    if extent_mm is None:
+        extent_mm = _cloud_extent_mm(result, plane)
+    if speed_vmax_m_per_s is None:
+        initial_speeds = np.linalg.norm(
+            np.asarray(result.trajectory_velocities_m_per_s[0], dtype=float), axis=-1
+        )
+        speed_vmax_m_per_s = max(float(np.percentile(initial_speeds, 95.0)), 1.0e-9)
+
+    horiz_name, vert_name, _ = _PLANE_AXES[plane]
+    h_axis = _AXIS_INDEX[horiz_name]
+    v_axis = _AXIS_INDEX[vert_name]
+
+    figsize = figsize or (11.5, 4.8)
+    figure, (cloud_axis, temperature_axis) = plt.subplots(
+        1, 2, figsize=figsize, constrained_layout=True,
+        gridspec_kw={"width_ratios": (1.2, 1.0)},
+    )
+
+    positions_mm = positions_m * 1.0e3
+    speeds = np.linalg.norm(velocities, axis=-1)
+    norm = colors.Normalize(vmin=0.0, vmax=float(speed_vmax_m_per_s))
+    bound = ~lost
+    if np.any(bound):
+        cloud_axis.scatter(
+            positions_mm[bound, h_axis], positions_mm[bound, v_axis],
+            c=speeds[bound], cmap=cmap, norm=norm,
+            s=14, edgecolors="white", linewidths=0.3, alpha=0.9, zorder=5,
+        )
+    if np.any(lost):
+        cloud_axis.scatter(
+            positions_mm[lost, h_axis], positions_mm[lost, v_axis],
+            s=9, c="#888888", alpha=0.35, linewidths=0, zorder=4,
+        )
+    if beams is not None:
+        _draw_beam_arrows_2d(cloud_axis, beams, plane, extent_mm)
+    figure.colorbar(
+        cm.ScalarMappable(norm=norm, cmap=cmap),
+        ax=cloud_axis, label="atom speed (m/s)", fraction=0.046, pad=0.03,
+    )
+    cloud_axis.set_xlim(extent_mm[0], extent_mm[1])
+    cloud_axis.set_ylim(extent_mm[2], extent_mm[3])
+    cloud_axis.set_aspect("equal")
+    cloud_axis.set_xlabel(f"{horiz_name} (mm)")
+    cloud_axis.set_ylabel(f"{vert_name} (mm)")
+    cloud_axis.set_title("Atom cloud")
+
+    times_ms = times * 1.0e3
+    temperature_axis.plot(times_ms, temperatures_uK, color="tab:blue")
+    if doppler_limit_uK is not None:
+        temperature_axis.axhline(
+            doppler_limit_uK, color="#888888", linestyle="--", linewidth=1.0,
+        )
+        temperature_axis.text(
+            times_ms[-1], doppler_limit_uK, " Doppler limit",
+            color="#888888", fontsize="small", ha="right", va="bottom",
+        )
+    temperature_axis.axvline(
+        times_ms[end_index], color="#ff5050", linewidth=1.0, alpha=0.8,
+    )
+    temperature_axis.plot(
+        times_ms[end_index], temperatures_uK[end_index],
+        marker="o", color="#ff5050", markersize=5,
+    )
+    temperature_axis.set_yscale("log")
+    temperature_axis.set_xlabel("time (ms)")
+    temperature_axis.set_ylabel("kinetic temperature (uK)")
+    temperature_axis.set_title("Cooling")
+
+    trapped_fraction = float(np.mean(bound))
+    title = title or (
+        f"t = {t * 1.0e3:6.2f} ms    "
+        f"T = {temperatures_uK[end_index]:7.1f} uK    "
+        f"trapped {trapped_fraction:.0%}"
+    )
+    figure.suptitle(title)
+    return figure, [cloud_axis, temperature_axis]
+
+
+def render_cloud_animation(
+    result: SimulationResult,
+    output_path: str | Path,
+    *,
+    mass_kg: float = RB87_MASS_KG,
+    plane: FramePlane = "xz",
+    beams: Iterable[LaserBeam] | None = None,
+    n_frames: int = 80,
+    fps: int = 20,
+    dpi: int = 90,
+    extent_mm: tuple[float, float, float, float] | None = None,
+    speed_vmax_m_per_s: float | None = None,
+    doppler_limit_uK: float | None = None,
+    cmap: str = "viridis",
+    figsize: tuple[float, float] | None = None,
+    show_progress: bool = True,
+) -> Path:
+    """Render a GIF of a scattering run by stitching `draw_cloud_frame`s.
+
+    The simulation must have been run with `store_trajectories=True` (and
+    stored velocities, which the default settings keep). Axis extent, the
+    speed color scale, and the cooling curve are computed once so they stay
+    fixed across all frames. Output extension `.gif` (default), `.webp`, or
+    `.png`/`.apng` selects the encoder, as in `render_animation`.
+    """
+    try:
+        import matplotlib.pyplot as plt
+        from PIL import Image
+    except ImportError as exc:
+        raise ImportError(
+            "Animation requires matplotlib and Pillow; install with `pip install .[viz]`."
+        ) from exc
+
+    if result.trajectory_times_s is None or result.trajectory_velocities_m_per_s is None:
+        raise ValueError(
+            "Simulation was run without stored trajectories; "
+            "set SimulationConfig.store_trajectories=True."
+        )
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    temperatures_uK = kinetic_temperature_time_series_uK(result, mass_kg=mass_kg)
+    if extent_mm is None:
+        extent_mm = _cloud_extent_mm(result, plane)
+    if speed_vmax_m_per_s is None:
+        initial_speeds = np.linalg.norm(
+            np.asarray(result.trajectory_velocities_m_per_s[0], dtype=float), axis=-1
+        )
+        speed_vmax_m_per_s = max(float(np.percentile(initial_speeds, 95.0)), 1.0e-9)
+
+    duration = float(result.trajectory_times_s[-1])
+    frame_times = np.linspace(0.0, duration, max(2, int(n_frames)))
+
+    progress = _progress_iter if show_progress else lambda x, **_: x
+
+    images: list[Image.Image] = []
+    with tempfile.TemporaryDirectory(prefix="atom_mc_frames_") as tmpdir:
+        for k, t in enumerate(
+            progress(frame_times, total=len(frame_times), desc="render frames")
+        ):
+            figure, _ = draw_cloud_frame(
+                float(t), result, mass_kg=mass_kg, plane=plane, beams=beams,
+                extent_mm=extent_mm, speed_vmax_m_per_s=speed_vmax_m_per_s,
+                temperatures_uK=temperatures_uK,
+                doppler_limit_uK=doppler_limit_uK, cmap=cmap, figsize=figsize,
             )
             frame_path = os.path.join(tmpdir, f"frame_{k:05d}.png")
             figure.savefig(frame_path, dpi=dpi, facecolor="white")
