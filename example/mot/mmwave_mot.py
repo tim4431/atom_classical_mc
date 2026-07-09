@@ -83,8 +83,8 @@ GRADIENT_G_PER_CM = 5.0  # radial; axial (beam axis) is twice this
 # --- grating chip --------------------------------------------------------
 DEFLECTION_ALPHA_RAD = np.deg2rad(46.0)
 SECTOR_AZIMUTHS_RAD = np.deg2rad([0.0, 120.0, 240.0])
-DIFFRACTION_EFFICIENCY = 1.0 / 3.0  # power fraction into each +1 order
-CHIP_Z_M = -10.0e-3  # chip surface below the quadrupole zero
+DIFFRACTION_EFFICIENCY = 2.0 / 3.0  # power fraction into each +1 order
+CHIP_Z_M = -5.0e-3  # chip surface below the quadrupole zero
 
 # --- atomic beam ---------------------------------------------------------
 OVEN_TEMPERATURE_K = 600.0
@@ -264,6 +264,112 @@ def print_diagnostics(system: LightMatterSystem) -> None:
     print()
 
 
+def _beams_figure(system: LightMatterSystem, save: bool) -> None:
+    """Map the four beam volumes: counts and total saturation.
+
+    Left: how many beams illuminate each point of the vertical x-z plane
+    (y = 0, the plane of the atomic beam). Middle: the same count in the
+    horizontal x-y plane at the trap height, showing the three sector
+    prisms. Right: total saturation in x-z. The atomic beam enters along
+    z = 0 from the left; full radiation-pressure balance exists only
+    where all four beams overlap.
+    """
+
+    import matplotlib
+
+    if save:
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    def sample_plane(h_vals_m, v_vals_m, plane):
+        hh, vv = np.meshgrid(h_vals_m, v_vals_m)
+        if plane == "xz":
+            points = np.stack([hh, np.zeros_like(hh), vv], axis=-1)
+        else:  # xy at trap height z = 0
+            points = np.stack([hh, vv, np.zeros_like(hh)], axis=-1)
+        count = np.zeros(hh.shape)
+        total = np.zeros(hh.shape)
+        for beam in system.beams:
+            s = beam.saturation_at(points)
+            count += (s > 1.0e-12).astype(float)
+            total += s
+        return count, total
+
+    x_mm = np.linspace(-32.0, 32.0, 481)
+    z_mm = np.linspace(CHIP_Z_M * 1e3 - 3.0, 21.0, 241)
+    y_mm = np.linspace(-30.0, 30.0, 451)
+    count_xz, total_xz = sample_plane(x_mm * 1e-3, z_mm * 1e-3, "xz")
+    count_xy, _ = sample_plane(x_mm * 1e-3, y_mm * 1e-3, "xy")
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.4))
+    count_cmap = plt.get_cmap("viridis", 5)
+
+    im0 = axes[0].pcolormesh(
+        x_mm, z_mm, count_xz, cmap=count_cmap, vmin=-0.5, vmax=4.5, shading="auto"
+    )
+    axes[0].axhline(CHIP_Z_M * 1e3, color="k", lw=2.5)
+    axes[0].annotate(
+        "grating chip", (20.0, CHIP_Z_M * 1e3 - 2.0), color="k", fontsize=9
+    )
+    axes[0].plot(0.0, 0.0, "r+", ms=12, mew=2)
+    axes[0].annotate(
+        "", xy=(-14.0, 0.0), xytext=(-30.0, 0.0),
+        arrowprops=dict(arrowstyle="-|>", color="w", lw=1.8),
+    )
+    axes[0].annotate("atomic beam", (-30.0, 1.0), color="w", fontsize=9)
+    axes[0].annotate(
+        "", xy=(0.0, 13.0), xytext=(0.0, 19.5),
+        arrowprops=dict(arrowstyle="-|>", color="#ff5050", lw=2.0),
+    )
+    axes[0].annotate("incident", (1.0, 16.0), color="#ff5050", fontsize=9)
+    alpha_deg = np.rad2deg(DEFLECTION_ALPHA_RAD)
+    axes[0].annotate(
+        "",
+        xy=(-17.0, 6.0),
+        xytext=(
+            -17.0 + 7.0 * np.sin(DEFLECTION_ALPHA_RAD),
+            6.0 - 7.0 * np.cos(DEFLECTION_ALPHA_RAD),
+        ),
+        arrowprops=dict(arrowstyle="-|>", color="#ff5050", lw=2.0),
+    )
+    axes[0].annotate(
+        f"diffracted\n(alpha = {alpha_deg:.0f} deg)", (-31.0, 9.0),
+        color="#ff5050", fontsize=9,
+    )
+    axes[0].set_xlabel("x [mm]")
+    axes[0].set_ylabel("z [mm]")
+    axes[0].set_title("Beams per point, x-z plane (y = 0)")
+    fig.colorbar(im0, ax=axes[0], ticks=[0, 1, 2, 3, 4], label="beam count")
+
+    im1 = axes[1].pcolormesh(
+        x_mm, y_mm, count_xy, cmap=count_cmap, vmin=-0.5, vmax=4.5, shading="auto"
+    )
+    axes[1].plot(0.0, 0.0, "r+", ms=12, mew=2)
+    axes[1].axhline(0.0, color="w", lw=0.8, ls="--", alpha=0.6)
+    axes[1].annotate("atomic beam path", (-31.0, 1.5), color="w", fontsize=9)
+    axes[1].set_xlabel("x [mm]")
+    axes[1].set_ylabel("y [mm]")
+    axes[1].set_title("Beams per point, x-y plane (z = 0)")
+    axes[1].set_aspect("equal")
+    fig.colorbar(im1, ax=axes[1], ticks=[0, 1, 2, 3, 4], label="beam count")
+
+    im2 = axes[2].pcolormesh(x_mm, z_mm, total_xz, cmap="magma", shading="auto")
+    axes[2].axhline(CHIP_Z_M * 1e3, color="w", lw=2.5)
+    axes[2].plot(0.0, 0.0, "c+", ms=12, mew=2)
+    axes[2].set_xlabel("x [mm]")
+    axes[2].set_ylabel("z [mm]")
+    axes[2].set_title("Total saturation, x-z plane")
+    fig.colorbar(im2, ax=axes[2], label="s = I / I_sat (summed)")
+
+    fig.tight_layout()
+    if save:
+        out = os.path.join(HERE, "mmwave_mot_beams.png")
+        fig.savefig(out, dpi=150)
+        print(f"Saved beam-geometry figure to {out}")
+    else:
+        plt.show()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--atoms", type=int, default=250)
@@ -283,9 +389,22 @@ def main() -> None:
         action="store_true",
         help="render an animated GIF of the capture next to this script",
     )
+    parser.add_argument(
+        "--beams",
+        action="store_true",
+        help="show the beam-geometry figure and exit (no simulation)",
+    )
+    parser.add_argument(
+        "--save-beams",
+        action="store_true",
+        help="save the beam-geometry figure next to this script and exit",
+    )
     args = parser.parse_args()
 
     system = build_system(args.detuning_gamma)
+    if args.beams or args.save_beams:
+        _beams_figure(system, save=args.save_beams)
+        return
     rng = np.random.default_rng(args.seed)
     positions, velocities, window_fraction = sample_oven_beam(
         args.atoms, args.vmax, rng
