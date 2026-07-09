@@ -34,7 +34,7 @@ from src.simulation import (  # noqa: E402
 from src.trap import GaussianTrap, GriddedTrap, total_potential  # noqa: E402
 from src.units import joule_to_microkelvin, microkelvin_to_joule, ms, um  # noqa: E402
 
-RENDER_DIR = os.path.join(HERE, "render_ripa")
+RENDER_DIR = os.path.join(HERE, "render")
 os.makedirs(RENDER_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------

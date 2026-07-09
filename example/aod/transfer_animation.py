@@ -2,9 +2,9 @@
 
 Run from the repository root:
 
-    python3 example/transfer_animation.py
+    python3 example/aod/transfer_animation.py
 
-Produces:
+Produces (into the render/ subdir next to this script):
   - transfer_frame_0p20ms.png  (single still at one timestep)
   - transfer.gif               (full ramp animation, split xy + 3D view)
 """

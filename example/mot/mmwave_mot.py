@@ -95,19 +95,21 @@ from src.species import RB85_D2  # noqa: E402
 from src.units import gauss_per_cm, ms  # noqa: E402
 
 HERE = os.path.dirname(__file__)
+RENDER_DIR = os.path.join(HERE, "render")
 
 SPECIES = RB85_D2
 GAMMA_HZ = SPECIES.linewidth_rad_s / (2.0 * np.pi)
 
 # --- MOT light -----------------------------------------------------------
 MOT_BEAM_RADIUS_M = 25.0e-3  # 50 mm diameter, uniform top-hat
-MOT_BEAM_POWER_W = 120.0e-3
+MOT_BEAM_POWER_W = 6000.0e-3
 DETUNING_GAMMA = -1.5  # laser detuning in units of Gamma
 INCIDENT_HELICITY = -1.0  # circular; sign must match the coil polarity
 GRADIENT_G_PER_CM = 5.0  # radial; axial (beam axis) is twice this
 
 # --- grating chip --------------------------------------------------------
 DEFLECTION_ALPHA_RAD = np.deg2rad(46.0)
+# DEFLECTION_ALPHA_RAD = np.deg2rad(34.0)
 SECTOR_AZIMUTHS_RAD = np.deg2rad([0.0, 120.0, 240.0])
 # Power fraction into each sector's used +1 order. Radiation-pressure
 # balance requires 3 * eta = 1; other values give no stable trap.
@@ -117,7 +119,7 @@ DIFFRACTION_EFFICIENCY = 1.0 / 3.0
 # here): incoming atoms decelerate to rest at that depth, and only if
 # the stall point lies ABOVE the chip - inside the trap volume - are
 # they captured instead of falling back down the beamline.
-CHIP_Z_M = -12.0e-3
+CHIP_Z_M = -5.0e-3
 GRATING_HOLE_RADIUS_M = 1.5e-3  # central hole passing the atomic beam
 
 # --- atomic beam ---------------------------------------------------------
@@ -369,14 +371,16 @@ def _beams_figure(system: LightMatterSystem, save: bool) -> None:
     )
     axes[0].plot(0.0, 0.0, "r+", ms=12, mew=2)
     axes[0].annotate(
-        "", xy=(0.0, -14.0), xytext=(0.0, -28.0),
+        "",
+        xy=(0.0, -14.0),
+        xytext=(0.0, -28.0),
         arrowprops=dict(arrowstyle="-|>", color="w", lw=1.8),
     )
+    axes[0].annotate("atomic beam\n(through hole)", (2.5, -26.0), color="w", fontsize=9)
     axes[0].annotate(
-        "atomic beam\n(through hole)", (2.5, -26.0), color="w", fontsize=9
-    )
-    axes[0].annotate(
-        "", xy=(0.0, 13.0), xytext=(0.0, 19.5),
+        "",
+        xy=(0.0, 13.0),
+        xytext=(0.0, 19.5),
         arrowprops=dict(arrowstyle="-|>", color="#ff5050", lw=2.0),
     )
     axes[0].annotate("incident", (1.0, 16.0), color="#ff5050", fontsize=9)
@@ -391,8 +395,10 @@ def _beams_figure(system: LightMatterSystem, save: bool) -> None:
         arrowprops=dict(arrowstyle="-|>", color="#ff5050", lw=2.0),
     )
     axes[0].annotate(
-        f"diffracted\n(alpha = {alpha_deg:.0f} deg)", (-31.0, 9.0),
-        color="#ff5050", fontsize=9,
+        f"diffracted\n(alpha = {alpha_deg:.0f} deg)",
+        (-31.0, 9.0),
+        color="#ff5050",
+        fontsize=9,
     )
     axes[0].set_xlabel("x [mm]")
     axes[0].set_ylabel("z [mm]")
@@ -403,9 +409,7 @@ def _beams_figure(system: LightMatterSystem, save: bool) -> None:
         x_mm, y_mm, count_xy, cmap=count_cmap, vmin=-0.5, vmax=4.5, shading="auto"
     )
     axes[1].plot(0.0, 0.0, "r+", ms=12, mew=2)
-    axes[1].annotate(
-        "atomic beam\n(out of page)", (2.0, 2.0), color="w", fontsize=9
-    )
+    axes[1].annotate("atomic beam\n(out of page)", (2.0, 2.0), color="w", fontsize=9)
     axes[1].set_xlabel("x [mm]")
     axes[1].set_ylabel("y [mm]")
     axes[1].set_title("Beams per point, x-y plane (z = 0)")
@@ -422,7 +426,8 @@ def _beams_figure(system: LightMatterSystem, save: bool) -> None:
 
     fig.tight_layout()
     if save:
-        out = os.path.join(HERE, "mmwave_mot_beams.png")
+        os.makedirs(RENDER_DIR, exist_ok=True)
+        out = os.path.join(RENDER_DIR, "mmwave_mot_beams.png")
         fig.savefig(out, dpi=150)
         print(f"Saved beam-geometry figure to {out}")
     else:
@@ -472,7 +477,7 @@ def main() -> None:
     parser.add_argument(
         "--save-beams",
         action="store_true",
-        help="save the beam-geometry figure next to this script and exit",
+        help="save the beam-geometry figure into the render/ subdir and exit",
     )
     args = parser.parse_args()
 
@@ -588,13 +593,19 @@ def _render_gif(result, system: LightMatterSystem) -> None:
     matplotlib.use("Agg")
     from src.visualization import render_cloud_animation
 
-    out = os.path.join(HERE, "mmwave_mot_capture.gif")
+    os.makedirs(RENDER_DIR, exist_ok=True)
+    out = os.path.join(RENDER_DIR, "mmwave_mot_capture.gif")
     render_cloud_animation(
         result,
         out,
         mass_kg=system.species.mass_kg,
         plane="xz",
         beams=system.beams,
+        # Footprint shading, not edge arrows: the diffracted beams
+        # emanate from the grating prisms and the incident beam narrows
+        # to a through-hole pencil below the chip, so origin-centered
+        # arrows would misplace them. The overlay draws the real slices.
+        beam_overlay=True,
         doppler_limit_uK=system.species.doppler_temperature_uK,
         # Asymmetric window: keep the grating chip and the atomic-beam
         # climb from below in view rather than auto-centering.
@@ -666,7 +677,8 @@ def _plot(result, captured, save: bool, show: bool = False) -> None:
 
     fig.tight_layout()
     if save:
-        out = os.path.join(HERE, "mmwave_mot_summary.png")
+        os.makedirs(RENDER_DIR, exist_ok=True)
+        out = os.path.join(RENDER_DIR, "mmwave_mot_summary.png")
         fig.savefig(out, dpi=150)
         print(f"\nSaved plot to {out}")
     if show:

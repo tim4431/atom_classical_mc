@@ -43,6 +43,7 @@ from src.species import RB85_D2  # noqa: E402
 from src.units import gauss_per_cm, ms  # noqa: E402
 
 HERE = os.path.dirname(__file__)
+RENDER_DIR = os.path.join(HERE, "render")
 
 BACKENDS = {
     "steady-state": AdiabaticSteadyState,
@@ -93,12 +94,12 @@ def main() -> None:
     parser.add_argument(
         "--save-plot",
         action="store_true",
-        help="save summary figure next to this script",
+        help="save summary figure into the render/ subdir",
     )
     parser.add_argument(
         "--gif",
         action="store_true",
-        help="render an animated GIF of the cooling cloud next to this script",
+        help="render an animated GIF of the cooling cloud into the render/ subdir",
     )
     args = parser.parse_args()
 
@@ -166,7 +167,8 @@ def _render_gif(result, system) -> None:
     matplotlib.use("Agg")
     from src.visualization import render_cloud_animation
 
-    out = os.path.join(HERE, "rb85_mot_cloud.gif")
+    os.makedirs(RENDER_DIR, exist_ok=True)
+    out = os.path.join(RENDER_DIR, "rb85_mot_cloud.gif")
     render_cloud_animation(
         result,
         out,
@@ -219,7 +221,8 @@ def _plot(result, temperatures_uK, save: bool) -> None:
 
     fig.tight_layout()
     if save:
-        out = os.path.join(HERE, "rb85_mot_summary.png")
+        os.makedirs(RENDER_DIR, exist_ok=True)
+        out = os.path.join(RENDER_DIR, "rb85_mot_summary.png")
         fig.savefig(out, dpi=150)
         print(f"\nSaved plot to {out}")
     else:

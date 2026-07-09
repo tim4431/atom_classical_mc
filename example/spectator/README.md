@@ -9,10 +9,10 @@ Two flavours of moving tweezer live here:
 
 | Script                            | Moving trap         | Output dir   |
 | --------------------------------- | ------------------- | ------------ |
-| `spectator_qubits.py`             | analytical AOD Gaussian | `render_aod/` |
-| `spectator_qubits_ripa.py`        | gridded RIPA (tricubic, loaded from npz) | `render_ripa/` |
-| `spectator_qubits_dynamics.py`    | renders representative AOD fly-by GIFs | `render_aod/` |
-| `spectator_qubits_speed_scan.py`  | fixed AOD cell, scans speed only | `render_aod/` |
+| `spectator_qubits.py`             | analytical AOD Gaussian | `render/` |
+| `spectator_qubits_ripa.py`        | gridded RIPA (tricubic, loaded from npz) | `render/` |
+| `spectator_qubits_dynamics.py`    | renders representative AOD fly-by GIFs | `render/` |
+| `spectator_qubits_speed_scan.py`  | fixed AOD cell, scans speed only | `render/` |
 
 The two main scripts share their setup almost verbatim — same SLM, same
 ensemble, same fly-by geometry, same `(depth × distance)` sweep, same speed
@@ -62,18 +62,17 @@ physical offsets are scaled by `RIPA_WAIST_UM / AOD_WAIST_RADIAL_UM`.
 ## Outputs
 
 Both main scripts cache the sweep to an `.npz` and write `.png` and `.pdf`
-figures into the per-flavour render dir:
+figures into the shared `render/` subdir (filenames are flavour-prefixed, so
+the AOD and RIPA outputs never collide):
 
 ```
-render_aod/
-  spectator_qubits_sweep.npz          (cached sweep; delete to force re-run)
+render/
+  spectator_qubits_sweep.npz          (cached AOD sweep; delete to force re-run)
   spectator_qubits_drag_lines.{png,pdf}
   spectator_qubits_heating_lines.{png,pdf}
   spectator_qubits_dynamics_*.gif     (from spectator_qubits_dynamics.py)
   spectator_qubits_speed_scan.png     (from spectator_qubits_speed_scan.py)
-
-render_ripa/
-  spectator_qubits_ripa_sweep.npz
+  spectator_qubits_ripa_sweep.npz     (cached RIPA sweep)
   spectator_qubits_ripa_drag_lines.{png,pdf}
   spectator_qubits_ripa_heating_lines.{png,pdf}
   spectator_qubits_ripa_capture_lines.{png,pdf}

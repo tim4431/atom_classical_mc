@@ -35,7 +35,7 @@ from example.spectator.spectator_qubits import (  # noqa: E402
 )
 
 HERE = os.path.dirname(__file__)
-RENDER_DIR = os.path.join(HERE, "render_aod")
+RENDER_DIR = os.path.join(HERE, "render")
 os.makedirs(RENDER_DIR, exist_ok=True)
 
 CELL_AOD_DEPTH_UK = 1000.0

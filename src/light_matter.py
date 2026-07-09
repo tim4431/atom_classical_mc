@@ -71,11 +71,30 @@ class LightMatterSystem:
         object.__setattr__(self, "beams", beams)
         object.__setattr__(self, "magnetic_fields", fields)
 
+        # Cache the per-beam scalars/vectors as stacked arrays so the
+        # per-step rate engine can vectorize over beams instead of looping
+        # in Python (the beams are immutable, so this is safe to precompute).
+        object.__setattr__(
+            self,
+            "_beam_directions",
+            np.stack([np.asarray(b.direction, dtype=float) for b in beams]),
+        )
+        object.__setattr__(
+            self,
+            "_beam_detunings_hz",
+            np.array([b.detuning_hz for b in beams], dtype=float),
+        )
+        object.__setattr__(
+            self,
+            "_beam_helicities",
+            np.array([b.helicity for b in beams], dtype=float),
+        )
+
     @property
     def beam_directions(self) -> NDArray[np.float64]:
         """Unit propagation vectors, shape `(n_beams, 3)`."""
 
-        return np.stack([np.asarray(b.direction, dtype=float) for b in self.beams])
+        return self._beam_directions
 
     def magnetic_field_at(
         self, positions_m: ArrayLike, time_s: float = 0.0
@@ -112,23 +131,32 @@ class LightMatterSystem:
             b_vec / np.maximum(b_mag, 1.0e-300)[..., np.newaxis],
             np.array([0.0, 0.0, 1.0]),
         )
-        zeeman_rad_s = mu_over_hbar * b_mag
+        zeeman_rad_s = mu_over_hbar * b_mag  # shape (N,)
 
-        rates = np.empty(positions.shape[:-1] + (len(self.beams),), dtype=float)
-        for index, beam in enumerate(self.beams):
-            s_local = beam.saturation_at(positions, time_s=time_s)
-            cos_theta = np.sum(beam.direction * b_hat, axis=-1)
-            fractions = polarization_fractions(beam.helicity, cos_theta)
-            doppler_rad_s = k * np.sum(velocities * beam.direction, axis=-1)
-            base_detuning = 2.0 * np.pi * beam.detuning_hz - doppler_rad_s
+        # Vectorize over beams: everything below is shape (N, n_beams).
+        # Only the transverse-profile saturation stays a per-beam call,
+        # since each beam's `profile` is an arbitrary Python callable.
+        directions = self._beam_directions  # (n_beams, 3)
+        s_local = np.stack(
+            [beam.saturation_at(positions, time_s=time_s) for beam in self.beams],
+            axis=-1,
+        )
+        cos_theta = b_hat @ directions.T  # (N, n_beams)
+        doppler_rad_s = k * (velocities @ directions.T)
+        base_detuning = (
+            2.0 * np.pi * self._beam_detunings_hz - doppler_rad_s
+        )  # broadcast (n_beams,) over (N, n_beams)
 
-            w_beam = np.zeros(positions.shape[:-1], dtype=float)
-            for q, fraction in zip((+1.0, 0.0, -1.0), fractions):
-                delta_q = base_detuning - q * zeeman_rad_s
-                lorentz = 1.0 / (1.0 + (2.0 * delta_q / gamma) ** 2)
-                w_beam = w_beam + s_local * fraction * lorentz
-            rates[..., index] = 0.5 * gamma * w_beam
-        return rates
+        f_plus, f_pi, f_minus = polarization_fractions(
+            self._beam_helicities, cos_theta
+        )
+        zeeman = zeeman_rad_s[..., np.newaxis]  # (N, 1)
+        w_beam = np.zeros_like(s_local)
+        for q, fraction in ((+1.0, f_plus), (0.0, f_pi), (-1.0, f_minus)):
+            delta_q = base_detuning - q * zeeman
+            lorentz = 1.0 / (1.0 + (2.0 * delta_q / gamma) ** 2)
+            w_beam += s_local * fraction * lorentz
+        return 0.5 * gamma * w_beam
 
     def mean_radiation_force(
         self,

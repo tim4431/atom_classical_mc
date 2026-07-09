@@ -1225,6 +1225,67 @@ def _draw_beam_arrows_2d(
         )
 
 
+def _draw_beam_footprint_2d(
+    ax,
+    beams: Iterable[LaserBeam],
+    plane: FramePlane,
+    extent_mm: tuple[float, float, float, float],
+    *,
+    slice_coord_mm: float = 0.0,
+    grid_n: int = 260,
+    color: str = "#ff5050",
+    max_alpha: float = 0.4,
+) -> None:
+    """Shade the summed beam saturation on `plane` behind the cloud.
+
+    Faithful for any beam geometry (Gaussian, top-hat, pencil, grating
+    prism): it evaluates each beam's `saturation_at` on the slice and
+    paints a translucent field whose opacity grows with how strongly the
+    point is illuminated, so overlapping beams (the trapping volume) read
+    brightest. Unlike `_draw_beam_arrows_2d` it makes no assumption that
+    the beams pass through the origin, so it draws the real footprints —
+    the through-hole pencil, the grating prisms, the top-hat edge — rather
+    than a single edge arrow per in-plane beam.
+    """
+    from matplotlib.colors import to_rgb
+
+    horiz_name, vert_name, depth_name = _PLANE_AXES[plane]
+    h_axis = _AXIS_INDEX[horiz_name]
+    v_axis = _AXIS_INDEX[vert_name]
+    d_axis = _AXIS_INDEX[depth_name]
+
+    hh = np.linspace(extent_mm[0], extent_mm[1], grid_n)
+    vv = np.linspace(extent_mm[2], extent_mm[3], grid_n)
+    H, V = np.meshgrid(hh, vv)
+    points = np.zeros(H.shape + (3,), dtype=float)
+    points[..., h_axis] = H * 1.0e-3
+    points[..., v_axis] = V * 1.0e-3
+    points[..., d_axis] = slice_coord_mm * 1.0e-3
+
+    total = np.zeros(H.shape, dtype=float)
+    for beam in beams:
+        total += np.asarray(beam.saturation_at(points), dtype=float)
+    peak = float(np.max(total))
+    if peak <= 0.0:
+        return
+
+    rgb = to_rgb(color)
+    # sqrt keeps a lone top-hat/pencil footprint visible while regions
+    # where several beams overlap saturate toward max_alpha.
+    alpha = max_alpha * np.sqrt(np.clip(total / peak, 0.0, 1.0))
+    rgba = np.empty(H.shape + (4,), dtype=float)
+    rgba[..., 0], rgba[..., 1], rgba[..., 2] = rgb
+    rgba[..., 3] = alpha
+    ax.imshow(
+        rgba,
+        extent=(extent_mm[0], extent_mm[1], extent_mm[2], extent_mm[3]),
+        origin="lower",
+        aspect="auto",
+        interpolation="nearest",
+        zorder=1,
+    )
+
+
 def draw_cloud_frame(
     t: float,
     result: SimulationResult,
@@ -1232,6 +1293,7 @@ def draw_cloud_frame(
     mass_kg: float = RB87_MASS_KG,
     plane: FramePlane = "xz",
     beams: Iterable[LaserBeam] | None = None,
+    beam_overlay: bool = False,
     extent_mm: tuple[float, float, float, float] | None = None,
     speed_vmax_m_per_s: float | None = None,
     temperatures_uK: NDArray[np.float64] | None = None,
@@ -1243,8 +1305,12 @@ def draw_cloud_frame(
     """Render one snapshot of a trap-free (scattering) run at time `t`.
 
     Left panel: atom positions on `plane` in mm, colored by speed on a fixed
-    sequential scale (lost atoms in gray); optional inward arrows for every
-    `LaserBeam` lying in the plane. Right panel: the kinetic-temperature
+    sequential scale (lost atoms in gray). If `beams` is given, their
+    geometry is drawn behind the cloud: as a translucent saturation
+    footprint when `beam_overlay=True` (faithful for any geometry —
+    grating prisms, through-hole pencils), or otherwise as one inward edge
+    arrow per in-plane beam (a clean sketch for beams through the origin,
+    e.g. a six-beam MOT). Right panel: the kinetic-temperature
     time series with a cursor at `t`, plus an optional Doppler-limit line.
 
     `extent_mm`, `speed_vmax_m_per_s`, and `temperatures_uK` default to
@@ -1301,7 +1367,10 @@ def draw_cloud_frame(
             s=9, c="#888888", alpha=0.35, linewidths=0, zorder=4,
         )
     if beams is not None:
-        _draw_beam_arrows_2d(cloud_axis, beams, plane, extent_mm)
+        if beam_overlay:
+            _draw_beam_footprint_2d(cloud_axis, beams, plane, extent_mm)
+        else:
+            _draw_beam_arrows_2d(cloud_axis, beams, plane, extent_mm)
     figure.colorbar(
         cm.ScalarMappable(norm=norm, cmap=cmap),
         ax=cloud_axis, label="atom speed (m/s)", fraction=0.046, pad=0.03,
@@ -1352,6 +1421,7 @@ def render_cloud_animation(
     mass_kg: float = RB87_MASS_KG,
     plane: FramePlane = "xz",
     beams: Iterable[LaserBeam] | None = None,
+    beam_overlay: bool = False,
     n_frames: int = 80,
     fps: int = 20,
     dpi: int = 90,
@@ -1408,6 +1478,7 @@ def render_cloud_animation(
         ):
             figure, _ = draw_cloud_frame(
                 float(t), result, mass_kg=mass_kg, plane=plane, beams=beams,
+                beam_overlay=beam_overlay,
                 extent_mm=extent_mm, speed_vmax_m_per_s=speed_vmax_m_per_s,
                 temperatures_uK=temperatures_uK,
                 doppler_limit_uK=doppler_limit_uK, cmap=cmap, figsize=figsize,
