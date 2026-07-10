@@ -3,10 +3,10 @@
 A MOT is just one configuration of the general light-matter machinery:
 a `LightMatterSystem` made of a quadrupole `MagneticFieldConfig` plus
 three retro-reflected sigma+/sigma- `LaserBeam` pairs red-detuned from
-the Rb85 D2 cycling transition F=3 -> F'=4, attached to the standard
-`run_simulation` driver via the `scattering` argument (no conservative
-traps in this example). The internal-state backend evolves populations;
-the momentum update applies per-photon recoil.
+the Rb85 D2 cycling transition F=3 -> F'=4, wrapped in a `LightScattering`
+module on an `AtomSystem` (no conservative forces in this example). The
+internal-state backend evolves populations; the momentum update applies
+per-photon recoil.
 
 Run from the repository root:
 
@@ -30,17 +30,21 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
-from src.analysis import kinetic_temperature_time_series_uK  # noqa: E402
-from src.fields import QuadrupoleMagneticField  # noqa: E402
-from src.internal_state import (  # noqa: E402
+from atommc import (  # noqa: E402
     AdiabaticSteadyState,
+    AtomSystem,
+    LightMatterSystem,
+    LightScattering,
+    QuadrupoleMagneticField,
+    RB85_D2,
     RateEquationPopulations,
+    SimulationConfig,
+    gauss_per_cm,
+    ms,
+    simulate,
+    six_beam_mot,
 )
-from src.laser import six_beam_mot  # noqa: E402
-from src.light_matter import LightMatterSystem  # noqa: E402
-from src.simulation import SimulationConfig, run_simulation  # noqa: E402
-from src.species import RB85_D2  # noqa: E402
-from src.units import gauss_per_cm, ms  # noqa: E402
+from atommc.postprocess.analysis import kinetic_temperature_time_series_uK  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 RENDER_DIR = os.path.join(HERE, "render")
@@ -73,7 +77,6 @@ def build_config(seed: int) -> SimulationConfig:
         timestep_s=5.0e-8,
         duration_s=float(ms(5.0)),
         ensemble_size=400,
-        mass_kg=RB85_D2.mass_kg,
         loss_radius_m=8.0e-3,  # atoms leaving the beam volume are lost
         random_seed=seed,
         store_trajectories=True,
@@ -117,9 +120,11 @@ def main() -> None:
         f"duration {config.duration_s * 1e3:.1f} ms\n"
     )
 
-    result = run_simulation(
-        [], config, scattering=system, internal_model=BACKENDS[args.backend]()
+    atom_system = AtomSystem(
+        species=species,
+        modules=[LightScattering(system, model=BACKENDS[args.backend]())],
     )
+    result = simulate(atom_system, config)
     temperatures_uK = kinetic_temperature_time_series_uK(
         result, mass_kg=species.mass_kg
     )
@@ -165,7 +170,7 @@ def _render_gif(result, system) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
-    from src.visualization import render_cloud_animation
+    from atommc.postprocess.visualization import render_cloud_animation
 
     os.makedirs(RENDER_DIR, exist_ok=True)
     out = os.path.join(RENDER_DIR, "rb85_mot_cloud.gif")

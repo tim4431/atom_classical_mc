@@ -20,8 +20,8 @@ sys.path.insert(0, ROOT)
 # Re-use the example's geometry so the animation matches the static plots.
 from example.aod.slm_to_aod_transfer import build_transfer_problem  # noqa: E402
 
-from src.simulation import run_simulation  # noqa: E402
-from src.visualization import draw_frame, render_animation  # noqa: E402
+from atommc import AtomSystem, MovingGaussianTrap, RB87_D2, simulate  # noqa: E402
+from atommc.postprocess.visualization import draw_frame, render_animation  # noqa: E402
 
 import matplotlib.pyplot as plt  # noqa: E402
 
@@ -32,7 +32,9 @@ os.makedirs(RENDER_DIR, exist_ok=True)
 
 def main() -> None:
     slm_trap, aod_trap_base, ramp, config = build_transfer_problem()
-    result = run_simulation(slm_trap, aod_trap_base, ramp, config)
+    aod_trap = MovingGaussianTrap(template=aod_trap_base, ramp=ramp)
+    system = AtomSystem(species=RB87_D2, modules=[slm_trap, aod_trap])
+    result = simulate(system, config)
     print(
         f"survival = {result.survival_probability:.3f}  "
         f"mean energy gain = {result.mean_energy_gain_uK:.2f} uK"

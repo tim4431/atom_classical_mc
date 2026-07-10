@@ -1,5 +1,11 @@
 # Light-matter extension: physics model and design
 
+> **Note (2026-07):** module paths and driver names in this document
+> predate the multiphysics restructure — `src/` is now `atommc/`, and
+> `run_simulation(..., scattering=..., internal_model=...)` became a
+> `LightScattering` module on an `AtomSystem` run by `simulate`. See
+> `doc/multiphysics_plan.md`. The physics model itself is unchanged.
+
 This document specifies the near-resonant light-force extension added on
 top of the conservative-trap simulator described in `plan.md`. It covers
 any configuration of laser beams and magnetic fields acting on an
@@ -112,9 +118,22 @@ trap-survival statistics post-hoc with `analysis.bound_to_trap` /
   therefore **all sub-Doppler cooling** (the simulator bottoms out near
   the Doppler temperature, appropriately rescaled by saturation and
   detuning).
-- Multilevel structure beyond the effective two-level cycling
-  transition: no hyperfine dark states, no repumper depletion dynamics
-  (a repumper is assumed perfect).
+- ~~Multilevel structure beyond the effective two-level cycling
+  transition~~ — now covered at the incoherent rate-equation level by
+  `physics/hyperfine.py` (`HyperfineScattering`): full `|F, m_F>`
+  sublevel populations, per-transition Zeeman shifts and strengths from
+  exact Wigner algebra, spontaneous branching, hyperfine dark states,
+  and explicit repump beams (via
+  `HyperfineSpecies.transition_offset_hz`). Populations advance by one
+  implicit-Euler step per timestep (unconditionally stable, exact
+  steady states, trace- and positivity-preserving); slow optical-pumping
+  transients are resolved while `(pumping rate) * dt < ~0.3`. Still
+  excluded: coherences between sublevels or beams (no dark
+  superposition states, no sub-Doppler), nonlinear Zeeman
+  (Paschen-Back), and the nuclear g-factor term (~0.1%). The two-level
+  `LightScattering` remains the default fast path; the hyperfine tables
+  are cross-validated against the ARC package in
+  `tests/test_hyperfine.py` (skipped when ARC is absent).
 - Dipole force of the near-resonant light (radiation pressure only;
   conservative dipole traps are layered via `TrapConfig`).
 - Atom-atom effects: reabsorption/radiation trapping, light-assisted

@@ -75,7 +75,9 @@ QUINTIC_MIN_JERK = PolynomialConnector(
 def arb_fifth_poly(beta: float) -> PolynomialConnector:
     """Quintic family from `aod_slm_movement_v2.trajectories`.
 
-    `beta = 1` reproduces `QUINTIC_MIN_JERK`; the v2 work uses `beta = 1.5625`.
+    `beta` is the normalized peak velocity `dy/du` at `u = 0.5`.
+    `beta = 15/8 = 1.875` reproduces `QUINTIC_MIN_JERK`; the v2 work uses
+    `beta = 1.5625`.
     """
 
     return PolynomialConnector(

@@ -22,9 +22,15 @@ import sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
-from src.simulation import SimulationConfig, run_simulation  # noqa: E402
-from src.units import um  # noqa: E402
-from src.visualization import render_animation  # noqa: E402
+from atommc import (  # noqa: E402
+    AtomSystem,
+    MovingGaussianTrap,
+    RB87_D2,
+    SimulationConfig,
+    simulate,
+)
+from atommc.units import um  # noqa: E402
+from atommc.postprocess.visualization import render_animation  # noqa: E402
 
 from example.spectator.spectator_qubits import (  # noqa: E402
     AOD_WAIST_RADIAL_UM,
@@ -92,7 +98,8 @@ def render_one(
         store_trajectories=True,
         trajectory_stride=TRAJ_STRIDE,
     )
-    result = run_simulation(slm, aod_base, ramp, config)
+    aod = MovingGaussianTrap(template=aod_base, ramp=ramp)
+    result = simulate(AtomSystem(species=RB87_D2, modules=[slm, aod]), config)
 
     n_lost = int(result.lost.sum())
     print(

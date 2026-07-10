@@ -24,9 +24,9 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
-from src.ramp import RampSequence  # noqa: E402
-from src.trap import AstigmaticAODTrap  # noqa: E402
-from src.units import joule_to_microkelvin  # noqa: E402
+from atommc.ramp import RampSequence  # noqa: E402
+from atommc.physics.traps import AstigmaticAODTrap  # noqa: E402
+from atommc.units import joule_to_microkelvin  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 RENDER_DIR = os.path.join(HERE, "render")

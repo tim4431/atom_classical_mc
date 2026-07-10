@@ -12,8 +12,13 @@ python3 example/mot/rb85_mot.py --save-plot
 
 | Path | What it covers |
 | --- | --- |
-| `aod/` | SLM→moving-AOD tweezer transfer (conservative pipeline) and its GIF animation |
-| `mot/` | Near-resonant light-force MOTs (Rb85 MOT, tri-sector grating MOT) |
+| `aod/slm_to_aod_transfer.py` | SLM→moving-AOD tweezer transfer (conservative pipeline); GIF variant `transfer_animation.py` |
+| `aod/ramp_compare.py` | Ramp-profile heating/survival comparison for a moving-AOD drag (`--gif`) |
+| `aod/slm_to_aod_with_lensing.py` | v2 round-trip SLM↔AOD handoff run with vs. without velocity-coupled focal-shift lensing (`dxdt2z`) to isolate the lensing heating |
+| `mot/rb85_mot.py` | Rb85 MOT (`--backend rate-equation`, `--plot` / `--save-plot`, `--gif`) |
+| `mot/mmwave_mot.py` | Tri-sector grating MOT from a 600 K effusive beam (sector-prism `LaserBeam.profile`) |
+| `mot/hyperfine_mot.py` | m_F-resolved `HyperfineScattering`: optical pumping, dark states, repump, two-level vs hyperfine MOT comparison (`--no-mot` skips the Monte Carlo) |
+| `magnetic_dipole/quadrupole_and_dipole.py` | Quadrupole magnetic trap (`ZeemanPotential`) + 850 nm `DipoleBeamPotential` tweezer cross-checked against `GaussianTrap` |
 | `spectator/` | Spectator-qubit fly-by suite (AOD + gridded RIPA); see `spectator/README.md` |
 | `astigmatism_check.py` | `AstigmaticAODTrap` sanity check |
 | `gridded_vs_analytical.py` | `GriddedTrap` vs analytical `GaussianTrap` |

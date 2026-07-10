@@ -11,7 +11,7 @@ the mean photon spin projection along the propagation direction `k`.
 and intermediate values are treated as an *incoherent* mixture of the
 two circular components with weights `(1 + h)/2` and `(1 - h)/2`. This
 is the appropriate level of description for the rate-equation internal
-state models in `src.internal_state`; coherent (linear/elliptical)
+state models in `physics.internal_state`; coherent (linear/elliptical)
 polarization interference effects are out of scope.
 
 `six_beam_mot` builds the standard retro-reflected three-axis MOT beam

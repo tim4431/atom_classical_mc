@@ -1,10 +1,10 @@
-"""Internal-state backends for light-matter (MOT) simulations.
+"""Internal-state backends for light-matter (scattering) simulations.
 
-The coupled simulation in `src.mot` splits each timestep into an
+The `LightScattering` physics module splits each timestep into an
 internal-state update and a momentum update, in the spirit of
 multiphysics solvers. This module owns the internal-state side.
 
-The interface contract: `src.mot.MOTSystem.stimulated_rates` reduces
+The interface contract: `LightMatterSystem.stimulated_rates` reduces
 all laser/magnetic-field geometry to a per-atom, per-beam one-way
 stimulated rate matrix `W` (s^-1) for an effective two-level atom:
 
@@ -72,6 +72,16 @@ class ScatteringEvents:
         return np.sum(self.absorbed_per_beam, axis=-1)
 
 
+def steady_state_excited_fraction(
+    total_stimulated_rate_per_s: NDArray[np.float64],
+    linewidth_rad_s: float,
+) -> NDArray[np.float64]:
+    """Two-level steady-state population `p = W_tot / (Gamma + 2 W_tot)`."""
+
+    w_tot = np.asarray(total_stimulated_rate_per_s, dtype=float)
+    return w_tot / (linewidth_rad_s + 2.0 * w_tot + _TINY)
+
+
 class InternalStateModel(ABC):
     """Abstract internal-state backend.
 
@@ -136,7 +146,7 @@ class AdiabaticSteadyState(InternalStateModel):
     ) -> tuple[NDArray[np.float64], ScatteringEvents]:
         w = np.asarray(stimulated_rates_per_s, dtype=float)
         w_tot = np.sum(w, axis=-1)
-        p = w_tot / (linewidth_rad_s + 2.0 * w_tot + _TINY)
+        p = steady_state_excited_fraction(w_tot, linewidth_rad_s)
         events = _poisson_events(w, p, linewidth_rad_s, dt_s, rng)
         return p, events
 
@@ -174,7 +184,7 @@ class RateEquationPopulations(InternalStateModel):
         p = np.asarray(state, dtype=float)
         w_tot = np.sum(w, axis=-1)
         decay = linewidth_rad_s + 2.0 * w_tot
-        p_ss = w_tot / (decay + _TINY)
+        p_ss = steady_state_excited_fraction(w_tot, linewidth_rad_s)
         x = decay * dt_s
         exp_x = np.exp(-x)
         p_next = p_ss + (p - p_ss) * exp_x

@@ -1,6 +1,6 @@
 """Static and time-dependent magnetic field configurations.
 
-`MagneticFieldConfig` mirrors the `TrapConfig` pattern: an abstract
+`MagneticFieldConfig` mirrors the `ConservativeForce` pattern: an abstract
 `B(r, t)` returning the field vector in tesla, with concrete
 implementations summed by `total_magnetic_field`.
 
@@ -32,6 +32,31 @@ class MagneticFieldConfig(ABC):
     ) -> NDArray[np.float64]:
         """Evaluate `B(r, t)` in tesla. Last axis of `positions_m` is 3."""
 
+    def jacobian(
+        self, positions_m: ArrayLike, time_s: float = 0.0
+    ) -> NDArray[np.float64]:
+        """Evaluate `dB_i/dr_j` in T/m, shape `(..., 3, 3)`.
+
+        Default: batched central finite differences on `vector`. Override
+        when the field has an analytic Jacobian.
+        """
+
+        positions = _as_positions(positions_m)
+        step = self._finite_difference_step_m()
+        out = np.zeros(positions.shape + (3,), dtype=float)
+        basis = np.eye(3)
+        for j in range(3):
+            delta = step * basis[j]
+            plus = self.vector(positions + delta, time_s=time_s)
+            minus = self.vector(positions - delta, time_s=time_s)
+            out[..., :, j] = (plus - minus) / (2.0 * step)
+        return out
+
+    def _finite_difference_step_m(self) -> float:
+        """Override if a class has a natural length scale."""
+
+        return 1.0e-8
+
 
 @dataclass(frozen=True)
 class UniformMagneticField(MagneticFieldConfig):
@@ -51,6 +76,12 @@ class UniformMagneticField(MagneticFieldConfig):
     ) -> NDArray[np.float64]:
         positions = _as_positions(positions_m)
         return np.broadcast_to(self.field_T, positions.shape).copy()
+
+    def jacobian(
+        self, positions_m: ArrayLike, time_s: float = 0.0
+    ) -> NDArray[np.float64]:
+        positions = _as_positions(positions_m)
+        return np.zeros(positions.shape + (3,), dtype=float)
 
 
 @dataclass(frozen=True)
@@ -89,6 +120,17 @@ class QuadrupoleMagneticField(MagneticFieldConfig):
         radial = offsets - axial * self.axis
         return self.gradient_T_per_m * (radial - 2.0 * axial * self.axis)
 
+    def jacobian(
+        self, positions_m: ArrayLike, time_s: float = 0.0
+    ) -> NDArray[np.float64]:
+        # B = b' (offset - 3 (offset . n) n)  =>  dB_i/dr_j = b' (I - 3 n n^T),
+        # a constant symmetric matrix broadcast over the batch.
+        positions = _as_positions(positions_m)
+        matrix = self.gradient_T_per_m * (
+            np.eye(3) - 3.0 * np.outer(self.axis, self.axis)
+        )
+        return np.broadcast_to(matrix, positions.shape + (3,)).copy()
+
 
 def total_magnetic_field(
     fields: MagneticFieldConfig | Iterable[MagneticFieldConfig],
@@ -101,6 +143,20 @@ def total_magnetic_field(
     out = np.zeros_like(positions, dtype=float)
     for field in _field_list(fields):
         out = out + field.vector(positions, time_s=time_s)
+    return out
+
+
+def total_magnetic_field_jacobian(
+    fields: MagneticFieldConfig | Iterable[MagneticFieldConfig],
+    positions_m: ArrayLike,
+    time_s: float = 0.0,
+) -> NDArray[np.float64]:
+    """Sum field Jacobians `dB_i/dr_j` [T/m] of one or more configurations."""
+
+    positions = _as_positions(positions_m)
+    out = np.zeros(positions.shape + (3,), dtype=float)
+    for field in _field_list(fields):
+        out = out + field.jacobian(positions, time_s=time_s)
     return out
 
 

@@ -8,9 +8,9 @@ from typing import Callable, Iterable, Sequence
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from .constants import HBAR_J_S, RB87_MASS_KG
-from .trap import TrapConfig, total_force, total_hessian, total_potential
-from .units import joule_to_microkelvin
+from ..constants import HBAR_J_S, RB87_MASS_KG
+from ..physics.base import ConservativeForce, total_force, total_hessian, total_potential
+from ..units import joule_to_microkelvin
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ class MotionalDecomposition:
 
 
 def approximate_harmonic_potential(
-    traps: TrapConfig | Iterable[TrapConfig],
+    traps: ConservativeForce | Iterable[ConservativeForce],
     center_m: ArrayLike,
     mass_kg: float = RB87_MASS_KG,
     mode_labels: Sequence[str] | None = None,

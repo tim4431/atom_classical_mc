@@ -5,7 +5,7 @@ transition parameters needed by the MOT / radiation-pressure model:
 wavelength, natural linewidth, saturation intensity, and the effective
 magnetic moment of the cycling transition.
 
-The Zeeman model used by `src.mot` is the standard textbook effective
+The Zeeman model used by the rate engine is the standard textbook effective
 two-level treatment: a `q = +1, 0, -1` polarization component driving
 `m -> m + q` sees a Zeeman detuning `q * mu_eff * B / hbar`, where
 `mu_eff = (g_e * m_e - g_g * m_g) * mu_B` evaluated on the stretched

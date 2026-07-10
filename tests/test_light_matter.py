@@ -7,32 +7,44 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
-from src.analysis import kinetic_temperature_time_series_uK  # noqa: E402
-from src.constants import (  # noqa: E402
+from atommc.postprocess.analysis import kinetic_temperature_time_series_uK  # noqa: E402
+from atommc.constants import (  # noqa: E402
     BOHR_MAGNETON_J_PER_T,
     HBAR_J_S,
 )
-from src.fields import (  # noqa: E402
+from atommc.geometry.fields import (  # noqa: E402
     QuadrupoleMagneticField,
     UniformMagneticField,
     total_magnetic_field,
 )
-from src.internal_state import (  # noqa: E402
+from atommc.physics.internal_state import (  # noqa: E402
     AdiabaticSteadyState,
     RateEquationPopulations,
     ScatteringEvents,
     StochasticJumpState,
     sample_recoil_velocity_kicks,
 )
-from src.laser import LaserBeam, six_beam_mot  # noqa: E402
-from src.light_matter import (  # noqa: E402
+from atommc.geometry.laser import LaserBeam, six_beam_mot  # noqa: E402
+from atommc.physics.light_matter import (  # noqa: E402
     LightMatterSystem,
     polarization_fractions,
 )
-from src.simulation import SimulationConfig, run_simulation  # noqa: E402
-from src.species import RB85_D2, RB87_D2  # noqa: E402
-from src.trap import GaussianTrap  # noqa: E402
-from src.units import gauss_per_cm, um  # noqa: E402
+from atommc.physics.scattering import LightScattering  # noqa: E402
+from atommc.driver import SimulationConfig, simulate  # noqa: E402
+from atommc.species import RB85_D2, RB87_D2  # noqa: E402
+from atommc.system import AtomSystem  # noqa: E402
+from atommc.physics.traps import GaussianTrap  # noqa: E402
+from atommc.units import gauss_per_cm, um  # noqa: E402
+
+
+def _simulate_scattering(light, config, model=None, forces=()):
+    """Run a LightMatterSystem through the module driver."""
+
+    scattering = (
+        LightScattering(light) if model is None else LightScattering(light, model=model)
+    )
+    system = AtomSystem(species=light.species, modules=[*forces, scattering])
+    return simulate(system, config)
 
 
 def _molasses_system(species=RB85_D2, detuning_hz=None, saturation=2.0):
@@ -160,7 +172,9 @@ class ExplicitInitialStateTests(unittest.TestCase):
             initial_velocities_m_per_s_array=velocities,
             reject_initially_lost=False,
         )
-        result = run_simulation(self._trap(), config)
+        result = simulate(
+            AtomSystem(species=RB87_D2, modules=[self._trap()]), config
+        )
         np.testing.assert_allclose(result.initial_positions_m, positions)
         np.testing.assert_allclose(result.initial_velocities_m_per_s, velocities)
 
@@ -402,11 +416,10 @@ class ScatteringSimulationTests(unittest.TestCase):
             timestep_s=2.0e-7,
             duration_s=6.0e-3,
             ensemble_size=200,
-            mass_kg=RB85_D2.mass_kg,
             initial_cloud_sigma_m=1.0e-4,
             random_seed=7,
         )
-        result = run_simulation([], config, scattering=system)
+        result = _simulate_scattering(system, config)
         self.assertLess(
             result.final_temperature_uK_all, 0.3 * result.initial_temperature_uK_all
         )
@@ -422,13 +435,12 @@ class ScatteringSimulationTests(unittest.TestCase):
             timestep_s=2.0e-7,
             duration_s=10.0e-3,
             ensemble_size=100,
-            mass_kg=RB85_D2.mass_kg,
             initial_cloud_sigma_m=0.5e-3,
             random_seed=11,
             store_trajectories=True,
             trajectory_stride=500,
         )
-        result = run_simulation([], config, scattering=system)
+        result = _simulate_scattering(system, config)
         initial_rms = float(
             np.sqrt(np.mean(np.sum(result.initial_positions_m**2, axis=-1)))
         )
@@ -452,12 +464,11 @@ class ScatteringSimulationTests(unittest.TestCase):
             timestep_s=1.0e-6,
             duration_s=5.0e-3,
             ensemble_size=50,
-            mass_kg=RB85_D2.mass_kg,
             initial_cloud_sigma_m=1.0e-5,
             loss_radius_m=1.0e-3,
             random_seed=3,
         )
-        result = run_simulation([], config, scattering=system)
+        result = _simulate_scattering(system, config)
         self.assertGreater(result.loss_fraction, 0.5)
         self.assertLess(float(np.mean(result.scattered_photons)), 1.0)
 
@@ -469,13 +480,10 @@ class ScatteringSimulationTests(unittest.TestCase):
             timestep_s=1.2e-9,
             duration_s=0.1e-3,
             ensemble_size=40,
-            mass_kg=RB85_D2.mass_kg,
             initial_cloud_sigma_m=1.0e-4,
             random_seed=5,
         )
-        result = run_simulation(
-            [], config, scattering=system, internal_model=StochasticJumpState()
-        )
+        result = _simulate_scattering(system, config, model=StochasticJumpState())
         self.assertLess(
             result.final_temperature_uK_all, result.initial_temperature_uK_all
         )
@@ -489,21 +497,14 @@ class ScatteringSimulationTests(unittest.TestCase):
             timestep_s=2.0e-7,
             duration_s=4.0e-3,
             ensemble_size=150,
-            mass_kg=RB85_D2.mass_kg,
             initial_cloud_sigma_m=1.0e-4,
             random_seed=13,
         )
-        result_a = run_simulation(
-            [],
-            SimulationConfig(**base),
-            scattering=system,
-            internal_model=AdiabaticSteadyState(),
+        result_a = _simulate_scattering(
+            system, SimulationConfig(**base), model=AdiabaticSteadyState()
         )
-        result_b = run_simulation(
-            [],
-            SimulationConfig(**base),
-            scattering=system,
-            internal_model=RateEquationPopulations(),
+        result_b = _simulate_scattering(
+            system, SimulationConfig(**base), model=RateEquationPopulations()
         )
         self.assertLess(
             abs(
@@ -537,8 +538,8 @@ class MixedPhysicsTests(unittest.TestCase):
             ensemble_size=100,
             random_seed=21,
         )
-        lit = run_simulation(trap, config, scattering=system)
-        dark = run_simulation(trap, config)
+        lit = _simulate_scattering(system, config, forces=[trap])
+        dark = simulate(AtomSystem(species=RB87_D2, modules=[trap]), config)
         self.assertGreater(
             lit.final_temperature_uK_all, 2.0 * dark.final_temperature_uK_all
         )
@@ -560,56 +561,57 @@ class MixedPhysicsTests(unittest.TestCase):
             ensemble_size=30,
             random_seed=22,
         )
-        result = run_simulation(trap, config, scattering=system)
+        result = _simulate_scattering(system, config, forces=[trap])
         self.assertEqual(result.loss_fraction, 0.0)
+        # The conventional diagnostics channel carries the photon counts.
+        np.testing.assert_array_equal(
+            result.diagnostics["scattering"]["scattered_photons"],
+            result.scattered_photons,
+        )
 
 
 class ValidationTests(unittest.TestCase):
-    def test_no_traps_and_no_scattering_raises(self):
-        config = SimulationConfig(
+    def _config(self, **overrides):
+        params = dict(
             initial_temperature_uK=10.0,
             timestep_s=1.0e-7,
             duration_s=1.0e-6,
             ensemble_size=2,
             initial_cloud_sigma_m=1.0e-6,
         )
-        with self.assertRaises(ValueError):
-            run_simulation([], config)
+        params.update(overrides)
+        return SimulationConfig(**params)
 
-    def test_mass_mismatch_raises(self):
-        system = _molasses_system(species=RB85_D2)
-        config = SimulationConfig(
-            initial_temperature_uK=10.0,
-            timestep_s=1.0e-7,
-            duration_s=1.0e-6,
-            ensemble_size=2,
-            initial_cloud_sigma_m=1.0e-6,
-        )  # mass_kg defaults to Rb87
+    def test_system_without_modules_raises(self):
         with self.assertRaises(ValueError):
-            run_simulation([], config, scattering=system)
+            simulate(AtomSystem(species=RB85_D2, modules=[]), self._config())
 
-    def test_internal_model_without_scattering_raises(self):
-        config = SimulationConfig(
-            initial_temperature_uK=10.0,
-            timestep_s=1.0e-7,
-            duration_s=1.0e-6,
-            ensemble_size=2,
-            initial_cloud_sigma_m=1.0e-6,
-        )
+    def test_species_mismatch_raises(self):
+        # Rb85 scattering module on an Rb87 system: caught at construction.
+        scattering = LightScattering(_molasses_system(species=RB85_D2))
+        with self.assertRaises(ValueError):
+            AtomSystem(species=RB87_D2, modules=[scattering])
+
+    def test_non_module_rejected(self):
         with self.assertRaises(TypeError):
-            run_simulation([], config, internal_model=AdiabaticSteadyState())
+            AtomSystem(species=RB85_D2, modules=["not a module"])
 
-    def test_no_traps_requires_cloud_sigma(self):
-        system = _molasses_system()
-        config = SimulationConfig(
-            initial_temperature_uK=10.0,
-            timestep_s=1.0e-7,
-            duration_s=1.0e-6,
-            ensemble_size=2,
-            mass_kg=RB85_D2.mass_kg,
+    def test_invalid_internal_model_rejected(self):
+        with self.assertRaises(TypeError):
+            LightScattering(_molasses_system(), model="not a model")
+
+    def test_energy_loss_on_with_scattering_raises(self):
+        scattering = LightScattering(_molasses_system())
+        system = AtomSystem(species=RB85_D2, modules=[scattering])
+        with self.assertRaises(ValueError):
+            simulate(system, self._config(energy_loss="on"))
+
+    def test_no_forces_requires_cloud_sigma(self):
+        system = AtomSystem(
+            species=RB85_D2, modules=[LightScattering(_molasses_system())]
         )
         with self.assertRaises(ValueError):
-            run_simulation([], config, scattering=system)
+            simulate(system, self._config(initial_cloud_sigma_m=None))
 
 
 if __name__ == "__main__":
