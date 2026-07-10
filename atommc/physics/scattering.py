@@ -12,7 +12,7 @@ just different `LightMatterSystem` geometries attached through this module.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from numpy.typing import NDArray
@@ -49,8 +49,13 @@ class LightScattering(StochasticProcess):
             raise TypeError("model must be an InternalStateModel.")
 
     @property
-    def species(self) -> AtomSpecies:
+    def species(self) -> AtomSpecies | None:
         return self.light.species
+
+    def bind_species(self, species: AtomSpecies) -> "LightScattering":
+        """Return a copy whose `LightMatterSystem` is bound to `species`."""
+
+        return replace(self, light=self.light.bind_species(species))
 
     def diagnostics_spec(self) -> tuple[DiagnosticSpec, ...]:
         return (
@@ -75,13 +80,14 @@ class LightScattering(StochasticProcess):
         rates = self.light.stimulated_rates(
             positions_m, velocities_m_per_s, time_s=time_s
         )
+        species = self.light.bound_species
         new_state, events = self.model.step(
-            state, rates, self.light.species.linewidth_rad_s, dt_s, rng
+            state, rates, species.linewidth_rad_s, dt_s, rng
         )
         kicks = sample_recoil_velocity_kicks(
             events,
             self.light.beam_directions,
-            self.light.species.recoil_velocity_m_per_s,
+            species.recoil_velocity_m_per_s,
             rng,
         )
         return StochasticStepResult(

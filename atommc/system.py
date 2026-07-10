@@ -14,8 +14,12 @@ Example::
 
     system = AtomSystem(species=RB85_D2, modules=[
         ZeemanPotential.for_sublevel([quad], g_f=1/3, m_f=3),
-        LightScattering(LightMatterSystem(RB85_D2, beams, [quad])),
+        LightScattering(LightMatterSystem(beams=beams, magnetic_fields=[quad])),
     ])
+
+The system species is injected into any module built with an unbound
+`LightMatterSystem` (``species=None``), so it is stated once on the
+`AtomSystem` rather than repeated in each module.
     result = simulate(system, SimulationConfig(...))
 """
 
@@ -49,7 +53,15 @@ class AtomSystem:
     def __post_init__(self) -> None:
         if not isinstance(self.species, AtomSpecies):
             raise TypeError("species must be an AtomSpecies.")
-        modules = tuple(self.modules)
+        # Inject the system species into any module that carries a
+        # LightMatterSystem left unbound (species=None), so the species is
+        # stated once here rather than repeated inside each module.
+        modules = tuple(
+            module.bind_species(self.species)
+            if hasattr(module, "bind_species")
+            else module
+            for module in self.modules
+        )
         forces = []
         processes = []
         for module in modules:

@@ -20,8 +20,8 @@ quad = QuadrupoleMagneticField(gradient_T_per_m=gauss_per_cm(10.0))
 system = AtomSystem(species=RB85_D2, modules=[
     ZeemanPotential.for_sublevel(quad, g_f=1/3, m_f=3),          # magnetic force
     LightScattering(LightMatterSystem(                            # radiation pressure
-        species=RB85_D2, beams=six_beam_mot(detuning_hz=-9.1e6,
-        saturation=2.0), magnetic_fields=[quad])),
+        beams=six_beam_mot(detuning_hz=-9.1e6, saturation=2.0),
+        magnetic_fields=[quad])),          # species injected by AtomSystem
 ])
 result = simulate(system, SimulationConfig(
     initial_temperature_uK=3000.0, initial_cloud_sigma_m=1e-3,

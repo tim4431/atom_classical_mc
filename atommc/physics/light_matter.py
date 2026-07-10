@@ -39,8 +39,8 @@ is not included (use `DipoleBeamPotential` for conservative dipole potentials).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Sequence
+from dataclasses import dataclass, replace
+from typing import Optional, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -54,10 +54,16 @@ from ..species import AtomSpecies
 
 @dataclass(frozen=True)
 class LightMatterSystem:
-    """Species + laser beams + magnetic fields, with the rate engine."""
+    """Species + laser beams + magnetic fields, with the rate engine.
 
-    species: AtomSpecies
-    beams: Sequence[LaserBeam]
+    `species` may be left as `None` ("unbound"); dropping it into an
+    `AtomSystem` injects the system species (see `bind_species`). The
+    rate engine (`stimulated_rates`, `mean_radiation_force`) requires a
+    bound species and raises a clear error otherwise.
+    """
+
+    species: Optional[AtomSpecies] = None
+    beams: Sequence[LaserBeam] = ()
     magnetic_fields: Sequence[MagneticFieldConfig] = ()
 
     def __post_init__(self) -> None:
@@ -97,6 +103,35 @@ class LightMatterSystem:
 
         return self._beam_directions
 
+    @property
+    def bound_species(self) -> AtomSpecies:
+        """The species, or a clear error if this system is still unbound."""
+
+        if self.species is None:
+            raise ValueError(
+                "LightMatterSystem has no species. Pass species=... when "
+                "building it, or place it in an AtomSystem, which injects "
+                "the system species."
+            )
+        return self.species
+
+    def bind_species(self, species: AtomSpecies) -> "LightMatterSystem":
+        """Return a copy bound to `species` (idempotent; verifies matches).
+
+        Leaves an already-bound system unchanged when the species agrees,
+        and raises when it conflicts, so the `AtomSystem` species stays the
+        single source of truth.
+        """
+
+        if self.species is not None:
+            if self.species.mass_kg != species.mass_kg:
+                raise ValueError(
+                    f"LightMatterSystem is built for {self.species.name} but "
+                    f"the system species is {species.name}."
+                )
+            return self
+        return replace(self, species=species)
+
     def magnetic_field_at(
         self, positions_m: ArrayLike, time_s: float = 0.0
     ) -> NDArray[np.float64]:
@@ -118,9 +153,10 @@ class LightMatterSystem:
         if velocities.shape != positions.shape:
             raise ValueError("velocities must match the shape of positions.")
 
-        gamma = self.species.linewidth_rad_s
-        k = self.species.wavenumber_rad_per_m
-        mu_over_hbar = self.species.mu_eff_j_per_t / HBAR_J_S
+        species = self.bound_species
+        gamma = species.linewidth_rad_s
+        k = species.wavenumber_rad_per_m
+        mu_over_hbar = species.mu_eff_j_per_t / HBAR_J_S
 
         b_vec = self.magnetic_field_at(positions, time_s=time_s)
         b_mag = np.linalg.norm(b_vec, axis=-1)
@@ -174,11 +210,12 @@ class LightMatterSystem:
         full simulation.
         """
 
+        species = self.bound_species
         w = self.stimulated_rates(positions_m, velocities_m_per_s, time_s=time_s)
         w_tot = np.sum(w, axis=-1)
-        p = steady_state_excited_fraction(w_tot, self.species.linewidth_rad_s)
+        p = steady_state_excited_fraction(w_tot, species.linewidth_rad_s)
         net_rates = w * (1.0 - 2.0 * p)[..., np.newaxis]
-        hbar_k = HBAR_J_S * self.species.wavenumber_rad_per_m
+        hbar_k = HBAR_J_S * species.wavenumber_rad_per_m
         return hbar_k * (net_rates @ self.beam_directions)
 
 

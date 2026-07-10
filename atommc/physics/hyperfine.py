@@ -48,7 +48,7 @@ sub-Doppler mechanisms), and decay is a single fine-structure line
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Mapping
 
@@ -478,6 +478,13 @@ class HyperfineScattering(StochasticProcess):
             raise TypeError("light must be a LightMatterSystem.")
         if not isinstance(self.hyperfine, HyperfineSpecies):
             raise TypeError("hyperfine must be a HyperfineSpecies.")
+        # The hyperfine species already fixes the isotope, so an unbound
+        # LightMatterSystem simply inherits `hyperfine.base` — the light
+        # geometry never needs its own species= for the hyperfine backend.
+        if self.light.species is None:
+            object.__setattr__(
+                self, "light", self.light.bind_species(self.hyperfine.base)
+            )
         if self.hyperfine.base != self.light.species:
             raise ValueError(
                 "hyperfine.base must be the same species as light.species."
@@ -524,6 +531,14 @@ class HyperfineScattering(StochasticProcess):
     @property
     def species(self) -> AtomSpecies:
         return self.light.species
+
+    def bind_species(self, species: AtomSpecies) -> "HyperfineScattering":
+        """Return a copy whose `LightMatterSystem` is bound to `species`.
+
+        Raises if `species` disagrees with `hyperfine.base`.
+        """
+
+        return replace(self, light=self.light.bind_species(species))
 
     def diagnostics_spec(self) -> tuple[DiagnosticSpec, ...]:
         specs = [

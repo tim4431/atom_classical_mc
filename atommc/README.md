@@ -101,7 +101,8 @@ Compact one-line descriptions of functions, classes, and methods in the
 
 ## `physics/light_matter.py`
 
-- `LightMatterSystem`: Species + beams + magnetic fields; reduces geometry to per-atom, per-beam stimulated rates.
+- `LightMatterSystem`: Species + beams + magnetic fields; reduces geometry to per-atom, per-beam stimulated rates. `species` is optional — leave it unbound and `AtomSystem` injects its species via `bind_species`.
+- `LightMatterSystem.bind_species`: Return a copy bound to a species (idempotent; verifies a pre-set species matches).
 - `LightMatterSystem.stimulated_rates`: One-way stimulated rate matrix `W(r, v, t)` with Doppler, Zeeman, and polarization decomposition.
 - `LightMatterSystem.mean_radiation_force`: Deterministic steady-state radiation-pressure force (for analysis/tests).
 - `polarization_fractions`: sigma+/pi/sigma- intensity fractions of a beam relative to the local B axis.
