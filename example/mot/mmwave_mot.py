@@ -107,7 +107,7 @@ GAMMA_HZ = SPECIES.linewidth_rad_s / (2.0 * np.pi)
 
 # --- MOT light -----------------------------------------------------------
 MOT_BEAM_RADIUS_M = 25.0e-3  # 50 mm diameter, uniform top-hat
-MOT_BEAM_POWER_W = 1000.0e-3
+MOT_BEAM_POWER_W = 20.0e-3
 DETUNING_GAMMA = -1.5  # laser detuning in units of Gamma
 INCIDENT_HELICITY = -1.0  # circular; sign must match the coil polarity
 GRADIENT_G_PER_CM = 5.0  # radial; axial (beam axis) is twice this
