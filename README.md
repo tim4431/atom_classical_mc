@@ -1,12 +1,7 @@
 # atom_classical_mc
 
-Classical Monte Carlo multiphysics simulator for cold atoms: an ensemble of
-classical point atoms evolved under composable physics modules — optical
-tweezers (static, moving, astigmatic, gridded), magnetic (Zeeman) potentials,
-optical dipole beams, and near-resonant photon scattering with internal-state
-dynamics (a MOT is one configuration of it, not a special case).
-
-![mc atom trajectories](demo/slm_to_aod_transfer_3d.png)
+Classical Monte Carlo multiphysics simulator for cold atoms: an ensemble of classical point atoms evolved under composable physics modules — optical tweezers (static, moving, astigmatic, gridded), magnetic (Zeeman) potentials,
+optical dipole beams, and near-resonant photon scattering with internal-state dynamics (a MOT is one configuration of it, not a special case).
 
 ![transfer animation](demo/slm_to_aod_transfer.gif)
 
@@ -62,6 +57,12 @@ AOD trap basis.
 By default, the simulator rejects and resamples atoms that are already unbound
 in the initial trap, so reported loss is conditioned on successful initial
 loading.
+
+`example/aod/ramp_compare.py` (`--gif`) sweeps the position-ramp shape of a
+moving-AOD drag and reports how the profile trades off peak velocity against
+heating and survival:
+
+![ramp profile comparison](demo/ramp_compare.gif)
 
 Near-resonant light forces (MOT, molasses, probe beams):
 

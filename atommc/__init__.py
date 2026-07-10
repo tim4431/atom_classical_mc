@@ -42,6 +42,12 @@ from .physics.base import (
     total_potential,
 )
 from .physics.dipole import DipoleBeamPotential
+from .physics.hyperfine import (
+    RB85_D2_HFS,
+    RB87_D2_HFS,
+    HyperfineScattering,
+    HyperfineSpecies,
+)
 from .physics.internal_state import (
     AdiabaticSteadyState,
     InternalStateModel,
@@ -111,6 +117,10 @@ __all__ = [
     "ZeemanPotential",
     # stochastic modules + backends
     "LightScattering",
+    "HyperfineScattering",
+    "HyperfineSpecies",
+    "RB85_D2_HFS",
+    "RB87_D2_HFS",
     "LightMatterSystem",
     "polarization_fractions",
     "InternalStateModel",

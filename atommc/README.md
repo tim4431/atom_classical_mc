@@ -120,6 +120,19 @@ Compact one-line descriptions of functions, classes, and methods in the
 
 - `LightScattering`: The `StochasticProcess` wrapping a `LightMatterSystem` + `InternalStateModel`; per step computes rates, evolves populations, samples photon events, and returns recoil kicks. Emits `scattered_photons` (sum) and `excited_fraction` (last) diagnostics.
 
+## `physics/hyperfine.py`
+
+- `HyperfineSpecies`: Full `|F, m_F>` sublevel structure on top of an `AtomSpecies`: hyperfine offsets, per-level Lande g_F Zeeman rates, dipole-allowed transition strengths (stretched-normalized), and spontaneous branching ratios — all from exact Wigner algebra + Steck A/B constants (ARC-cross-validated in tests).
+- `HyperfineSpecies.transition_offset_hz`: Line-center offset of `F -> F'` vs the cycling line (add to a beam's `detuning_hz` to make it e.g. a repumper).
+- `HyperfineSpecies.ground_level_index` / `excited_level_index`: Sublevel lookup into the population vector.
+- `RB85_D2_HFS` / `RB87_D2_HFS`: Presets layered on `RB85_D2` / `RB87_D2`.
+- `HyperfineScattering`: m_F-resolved `StochasticProcess` alternative to `LightScattering`: per-transition rates, implicit-Euler multilevel rate equations (dark states, optical pumping, repump dynamics), Poisson photon events, recoil kicks. Emits `scattered_photons`, `excited_fraction`, and per-level `ground_f<F>_population` diagnostics.
+- `HyperfineScattering.stimulated_rates_resolved`: Per-atom, per-beam, per-transition rate tensor (the m_F-resolved analog of `stimulated_rates`).
+
+## `physics/wigner.py`
+
+- `wigner_3j` / `wigner_6j`: Exact Racah-formula Wigner symbols (half-integer support) for hyperfine table construction.
+
 ## `postprocess/analysis.py`
 
 - `kinetic_energy_uK`: Convert per-atom velocities into kinetic energies in microkelvin units.

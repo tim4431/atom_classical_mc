@@ -98,6 +98,7 @@ from atommc import (  # noqa: E402
     polarization_fractions,
     simulate,
 )
+from atommc.physics.internal_state import steady_state_excited_fraction  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 RENDER_DIR = os.path.join(HERE, "render")
@@ -551,7 +552,7 @@ def main() -> None:
         )
 
     if args.summary or args.plot:
-        _plot(result, captured, save=args.summary, show=args.plot)
+        _plot(result, system, captured, save=args.summary, show=args.plot)
 
     if args.gif:
         _render_gif(result, system)
@@ -587,14 +588,14 @@ def _render_gif(result, system: LightMatterSystem) -> None:
     print(f"\nSaved GIF to {out}")
 
 
-def _plot(result, captured, save: bool, show: bool = False) -> None:
+def _plot(result, system, captured, save: bool, show: bool = False) -> None:
     import matplotlib
 
     if save and not show:
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.2))
+    fig, axes = plt.subplots(1, 4, figsize=(18, 4.2))
 
     # x-z trajectories with the chip sketch. The chip is not a physical
     # barrier in the model, so clip an atom's trace once it is below the
@@ -644,6 +645,32 @@ def _plot(result, captured, save: bool, show: bool = False) -> None:
     axes[2].set_xlabel("time [ms]")
     axes[2].set_ylabel("speed [m/s]")
     axes[2].set_title("Slowing of captured atoms")
+
+    # Excited-state fraction along each captured trajectory. The
+    # AdiabaticSteadyState internal state is memoryless — a pure function
+    # of (r, v) — so it can be recomputed exactly at the stored samples
+    # instead of being recorded during the run.
+    w = system.stimulated_rates(
+        result.trajectory_positions_m, result.trajectory_velocities_m_per_s
+    )
+    p_t = steady_state_excited_fraction(
+        np.sum(w, axis=-1), system.species.linewidth_rad_s
+    )
+    for atom in np.flatnonzero(captured):
+        axes[3].plot(times_ms_axis, p_t[:, atom], lw=0.6, alpha=0.35, color="C0")
+    if np.any(captured):
+        axes[3].plot(
+            times_ms_axis,
+            np.mean(p_t[:, captured], axis=1),
+            lw=1.8,
+            color="k",
+            label="mean over captured",
+        )
+        axes[3].legend(loc="upper right", fontsize=8)
+    axes[3].set_xlabel("time [ms]")
+    axes[3].set_ylabel("excited fraction")
+    axes[3].set_ylim(bottom=0.0)
+    axes[3].set_title("Internal state of captured atoms")
 
     fig.tight_layout()
     if save:
