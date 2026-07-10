@@ -133,7 +133,10 @@ trap-survival statistics post-hoc with `analysis.bound_to_trap` /
   (Paschen-Back), and the nuclear g-factor term (~0.1%). The two-level
   `LightScattering` remains the default fast path; the hyperfine tables
   are cross-validated against the ARC package in
-  `tests/test_hyperfine.py` (skipped when ARC is absent).
+  `tests/test_hyperfine.py` (skipped when ARC is absent), and
+  `hyperfine_species_from_arc` builds other alkali D2 species
+  (Li/Na/K/Rb/Cs) with all measured constants fetched from ARC once
+  per process.
 - Dipole force of the near-resonant light (radiation pressure only;
   conservative dipole traps are layered via `TrapConfig`).
 - Atom-atom effects: reabsorption/radiation trapping, light-assisted

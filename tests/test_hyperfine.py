@@ -27,6 +27,7 @@ from atommc import (  # noqa: E402
     RB87_D2_HFS,
     SimulationConfig,
     UniformMagneticField,
+    hyperfine_species_from_arc,
     simulate,
     six_beam_mot,
 )
@@ -203,6 +204,32 @@ class HyperfineTableTests(unittest.TestCase):
                 hfs_a_ground_hz=1.0e9,
                 hfs_a_excited_hz=25.0e6,
             )
+
+    def test_g_factor_override_is_applied_and_validated(self):
+        overrides = {2.0: -0.3, 3.0: 0.3}
+        hf = type(RB85_D2_HFS)(
+            base=RB85_D2_HFS.base,
+            i_nuclear=2.5,
+            hfs_a_ground_hz=RB85_D2_HFS.hfs_a_ground_hz,
+            hfs_a_excited_hz=RB85_D2_HFS.hfs_a_excited_hz,
+            hfs_b_excited_hz=RB85_D2_HFS.hfs_b_excited_hz,
+            g_factor_ground_by_f=overrides,
+        )
+        self.assertEqual(
+            float(hf.ground_g_factor[hf.ground_level_index(3, 0)]), 0.3
+        )
+        with self.assertRaises(ValueError):
+            type(RB85_D2_HFS)(
+                base=RB85_D2_HFS.base,
+                i_nuclear=2.5,
+                hfs_a_ground_hz=RB85_D2_HFS.hfs_a_ground_hz,
+                hfs_a_excited_hz=RB85_D2_HFS.hfs_a_excited_hz,
+                g_factor_ground_by_f={3.0: 0.3},  # F=2 missing
+            )
+
+    def test_from_arc_rejects_unknown_isotope(self):
+        with self.assertRaises(ValueError):
+            hyperfine_species_from_arc("Fr210")
 
 
 class HyperfineDynamicsTests(unittest.TestCase):
@@ -400,6 +427,48 @@ class ArcCrossValidationTests(unittest.TestCase):
                 got_hz = hf.excited_offset_rad_s[e] / (2.0 * np.pi)
                 ref_hz = atom.getHFSEnergyShift(1.5, f, a_e, b_e) - ref_top
                 self.assertAlmostEqual(got_hz / 1e6, ref_hz / 1e6, places=6)
+
+    def test_from_arc_matches_presets_and_is_cached(self):
+        for isotope, preset in (("Rb85", RB85_D2_HFS), ("Rb87", RB87_D2_HFS)):
+            hf = hyperfine_species_from_arc(isotope)
+            # Cached: a second call returns the identical object.
+            self.assertIs(hyperfine_species_from_arc(isotope), hf)
+            base, ref = hf.base, preset.base
+            self.assertAlmostEqual(
+                base.linewidth_rad_s / ref.linewidth_rad_s, 1.0, delta=1e-3
+            )
+            self.assertAlmostEqual(
+                base.saturation_intensity_w_per_m2
+                / ref.saturation_intensity_w_per_m2,
+                1.0,
+                delta=1e-3,
+            )
+            self.assertAlmostEqual(base.mass_kg / ref.mass_kg, 1.0, delta=1e-6)
+            self.assertAlmostEqual(
+                hf.hfs_a_ground_hz / preset.hfs_a_ground_hz, 1.0, delta=1e-6
+            )
+            # Same Wigner algebra behind both: identical branching.
+            np.testing.assert_allclose(
+                hf.branching_ratios, preset.branching_ratios, atol=1e-14
+            )
+            # ARC g_F include the nuclear term: close to, but not exactly,
+            # the electronic-only preset values.
+            np.testing.assert_allclose(
+                hf.ground_g_factor, preset.ground_g_factor, atol=2e-3
+            )
+
+    def test_from_arc_builds_other_alkalis(self):
+        cs = hyperfine_species_from_arc("Cs133")
+        self.assertEqual(cs.n_ground, 16)  # F = 3, 4
+        self.assertEqual(cs.n_excited, 32)  # F' = 2..5
+        self.assertAlmostEqual(cs.base.wavelength_m * 1e9, 852.35, delta=0.01)
+        # Cs repump offset F=3 -> F'=4 is ~8.94 GHz blue of the cycling line.
+        self.assertAlmostEqual(
+            cs.transition_offset_hz(3, 4) / 1e9, 8.94, delta=0.02
+        )
+        # K40: inverted hyperfine structure must still build consistently.
+        k40 = hyperfine_species_from_arc("K40")
+        np.testing.assert_allclose(k40.branching_ratios.sum(axis=1), 1.0)
 
 
 if __name__ == "__main__":

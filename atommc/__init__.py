@@ -47,6 +47,7 @@ from .physics.hyperfine import (
     RB87_D2_HFS,
     HyperfineScattering,
     HyperfineSpecies,
+    hyperfine_species_from_arc,
 )
 from .physics.internal_state import (
     AdiabaticSteadyState,
@@ -121,6 +122,7 @@ __all__ = [
     "HyperfineSpecies",
     "RB85_D2_HFS",
     "RB87_D2_HFS",
+    "hyperfine_species_from_arc",
     "LightMatterSystem",
     "polarization_fractions",
     "InternalStateModel",

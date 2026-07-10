@@ -49,6 +49,8 @@ sub-Doppler mechanisms), and decay is a single fine-structure line
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+from typing import Mapping
 
 import numpy as np
 from numpy.typing import NDArray
@@ -76,6 +78,11 @@ class HyperfineSpecies:
       levels, in linear Hz (Steck convention).
     - `l_*` / `j_*`: fine-structure quantum numbers (defaults: a D2
       line, S1/2 -> P3/2).
+    - `g_factor_ground_by_f` / `g_factor_excited_by_f`: optional
+      per-hyperfine-level Lande g_F overrides (`{F: g_F}`). When absent,
+      g_F comes from the exact electronic formula with the nuclear term
+      neglected (~0.1%); `hyperfine_species_from_arc` fills these with
+      ARC's values, which include it.
 
     Derived tables (built once, exposed as attributes): per-sublevel
     quantum numbers, hyperfine offsets [rad/s] relative to the cycling
@@ -94,6 +101,8 @@ class HyperfineSpecies:
     j_ground: float = 0.5
     l_excited: int = 1
     j_excited: float = 1.5
+    g_factor_ground_by_f: Mapping[float, float] | None = None
+    g_factor_excited_by_f: Mapping[float, float] | None = None
 
     def __post_init__(self) -> None:
         if self.i_nuclear < 0 or round(2 * self.i_nuclear) != 2 * self.i_nuclear:
@@ -113,6 +122,7 @@ class HyperfineSpecies:
             self.j_ground,
             self.hfs_a_ground_hz,
             self.hfs_b_ground_hz,
+            self.g_factor_ground_by_f,
         )
         excited = _build_manifold(
             self.i_nuclear,
@@ -120,6 +130,7 @@ class HyperfineSpecies:
             self.j_excited,
             self.hfs_a_excited_hz,
             self.hfs_b_excited_hz,
+            self.g_factor_excited_by_f,
         )
         for key, value in ground.items():
             object.__setattr__(self, f"ground_{key}", value)
@@ -233,7 +244,12 @@ class HyperfineSpecies:
 
 
 def _build_manifold(
-    i_nuclear: float, l: int, j: float, a_hz: float, b_hz: float
+    i_nuclear: float,
+    l: int,
+    j: float,
+    a_hz: float,
+    b_hz: float,
+    g_by_f: Mapping[float, float] | None = None,
 ) -> dict[str, NDArray[np.float64]]:
     """Per-sublevel tables of one fine-structure level's hyperfine manifold."""
 
@@ -242,10 +258,17 @@ def _build_manifold(
 
     shifts = {f: _hfs_shift_hz(f, i_nuclear, j, a_hz, b_hz) for f in f_levels}
     g_j = _lande_g_j(l, j)
+    if g_by_f is not None:
+        missing = [f for f in f_levels if f not in g_by_f]
+        if missing:
+            raise ValueError(f"g-factor override is missing levels F = {missing}.")
 
     f_list, m_list, g_list, off_list = [], [], [], []
     for f in f_levels:
-        g_f = 0.0 if f == 0 else _lande_g_f(g_j, f, i_nuclear, j)
+        if g_by_f is not None:
+            g_f = float(g_by_f[f])
+        else:
+            g_f = 0.0 if f == 0 else _lande_g_f(g_j, f, i_nuclear, j)
         for k in range(int(round(2 * f)) + 1):
             m = -f + k
             f_list.append(f)
@@ -323,6 +346,102 @@ RB87_D2_HFS = HyperfineSpecies(
     hfs_a_excited_hz=84.7185e6,
     hfs_b_excited_hz=12.4965e6,
 )
+
+
+_ARC_ISOTOPES = {
+    "Li6": "Lithium6",
+    "Li7": "Lithium7",
+    "Na23": "Sodium",
+    "K39": "Potassium39",
+    "K40": "Potassium40",
+    "K41": "Potassium41",
+    "Rb85": "Rubidium85",
+    "Rb87": "Rubidium87",
+    "Cs133": "Caesium",
+}
+
+
+@lru_cache(maxsize=None)
+def hyperfine_species_from_arc(isotope: str = "Rb85") -> HyperfineSpecies:
+    """Build a D2-line `HyperfineSpecies` with every constant from ARC.
+
+    Fetches the mass, transition wavelength, linewidth, stretched-line
+    saturation intensity, hyperfine A/B coefficients, and per-level
+    Lande g_F factors (including the nuclear term the built-in formula
+    neglects) from the ARC package (`pip install
+    ARC-Alkali-Rydberg-Calculator`) — an optional dependency imported
+    lazily here and queried exactly once per isotope (the result is
+    cached for the process lifetime; note ARC's own import takes a few
+    seconds). The angular structure (strengths, branching) is still
+    computed by the exact in-package Wigner algebra, which matches ARC
+    to machine precision (`tests/test_hyperfine.py`).
+
+    `isotope` is one of `Li6`, `Li7`, `Na23`, `K39`, `K40`, `K41`,
+    `Rb85`, `Rb87`, `Cs133`. The hardcoded `RB85_D2_HFS` / `RB87_D2_HFS`
+    presets (Steck constants) remain the ARC-free default path.
+    """
+
+    if isotope not in _ARC_ISOTOPES:
+        raise ValueError(
+            f"unknown isotope {isotope!r}; choose from {sorted(_ARC_ISOTOPES)}."
+        )
+    try:
+        import arc
+    except ImportError as error:  # pragma: no cover - depends on environment
+        raise ImportError(
+            "hyperfine_species_from_arc requires the optional ARC package: "
+            "pip install ARC-Alkali-Rydberg-Calculator"
+        ) from error
+
+    atom = getattr(arc, _ARC_ISOTOPES[isotope])()
+    n = atom.groundStateN
+    i_nuc = float(atom.I)
+    f_ground = i_nuc + 0.5
+    f_excited = i_nuc + 1.5
+
+    linewidth_rad_s = float(atom.getTransitionRate(n, 1, 1.5, n, 0, 0.5))
+    wavelength_m = abs(float(atom.getTransitionWavelength(n, 0, 0.5, n, 1, 1.5)))
+    isat_w_per_m2 = float(
+        atom.getSaturationIntensity(
+            n, 0, 0.5, f_ground, f_ground, n, 1, 1.5, f_excited, f_ground + 1.0
+        )
+    )
+    a_ground_hz, b_ground_hz = atom.getHFSCoefficients(n, 0, 0.5)
+    a_excited_hz, b_excited_hz = atom.getHFSCoefficients(n, 1, 1.5)
+    b_ground_hz = 0.0  # undefined for J = 1/2; ARC reports 0
+
+    def g_by_f(l: int, j: float) -> dict[float, float]:
+        f_min = abs(j - i_nuc)
+        levels = [f_min + k for k in range(int(round(j + i_nuc - f_min)) + 1)]
+        return {
+            f: 0.0 if f == 0 else float(atom.getLandegfExact(l, j, f))
+            for f in levels
+        }
+
+    g_ground = g_by_f(0, 0.5)
+    g_excited = g_by_f(1, 1.5)
+
+    base = AtomSpecies(
+        name=f"{isotope} D2 (ARC)",
+        mass_kg=float(atom.mass),
+        wavelength_m=wavelength_m,
+        linewidth_rad_s=linewidth_rad_s,
+        saturation_intensity_w_per_m2=isat_w_per_m2,
+        g_ground=g_ground[f_ground],
+        g_excited=g_excited[f_excited],
+        f_ground=f_ground,
+        f_excited=f_excited,
+    )
+    return HyperfineSpecies(
+        base=base,
+        i_nuclear=i_nuc,
+        hfs_a_ground_hz=float(a_ground_hz),
+        hfs_a_excited_hz=float(a_excited_hz),
+        hfs_b_ground_hz=float(b_ground_hz),
+        hfs_b_excited_hz=float(b_excited_hz),
+        g_factor_ground_by_f=g_ground,
+        g_factor_excited_by_f=g_excited,
+    )
 
 
 @dataclass(frozen=True)
