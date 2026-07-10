@@ -7,10 +7,11 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from .constants import RB87_MASS_KG
-from .simulation import SimulationResult
-from .trap import MovingGaussianTrap, TrapConfig
-from .units import joule_to_microkelvin
+from ..constants import RB87_MASS_KG
+from ..driver import SimulationResult
+from ..physics.base import ConservativeForce
+from ..physics.traps import MovingGaussianTrap
+from ..units import joule_to_microkelvin
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,7 @@ def kinetic_energy_uK(
 def bound_to_trap(
     positions_m: NDArray[np.float64],
     velocities_m_per_s: NDArray[np.float64],
-    trap: TrapConfig,
+    trap: ConservativeForce,
     mass_kg: float = RB87_MASS_KG,
     time_s: float = 0.0,
 ) -> NDArray[np.bool_]:
@@ -61,7 +62,7 @@ def bound_to_trap(
 def single_trap_energy_uK(
     positions_m: NDArray[np.float64],
     velocities_m_per_s: NDArray[np.float64],
-    trap: TrapConfig,
+    trap: ConservativeForce,
     mass_kg: float = RB87_MASS_KG,
     time_s: float = 0.0,
 ) -> NDArray[np.float64]:
@@ -74,7 +75,7 @@ def single_trap_energy_uK(
 
 def capture_probability(
     result: SimulationResult,
-    trap: TrapConfig,
+    trap: ConservativeForce,
     mass_kg: float = RB87_MASS_KG,
     conditional_on_survival: bool = False,
     time_s: float | None = None,
@@ -109,8 +110,8 @@ def capture_probability(
 
 def classify_final_trap_occupation(
     result: SimulationResult,
-    slm_trap: TrapConfig,
-    aod_trap: TrapConfig,
+    slm_trap: ConservativeForce,
+    aod_trap: ConservativeForce,
     mass_kg: float = RB87_MASS_KG,
     time_s: float | None = None,
 ) -> TrapOccupation:
@@ -233,8 +234,8 @@ def kinetic_temperature_time_series_uK(
 
 
 def snapshot_moving_trap(
-    trap: TrapConfig, time_s: float
-) -> TrapConfig:
+    trap: ConservativeForce, time_s: float
+) -> ConservativeForce:
     """Return a static `GaussianTrap` snapshot of a moving trap, or the trap itself."""
 
     if isinstance(trap, MovingGaussianTrap):

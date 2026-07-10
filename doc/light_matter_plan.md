@@ -1,5 +1,11 @@
 # Light-matter extension: physics model and design
 
+> **Note (2026-07):** module paths and driver names in this document
+> predate the multiphysics restructure — `src/` is now `atommc/`, and
+> `run_simulation(..., scattering=..., internal_model=...)` became a
+> `LightScattering` module on an `AtomSystem` run by `simulate`. See
+> `doc/multiphysics_plan.md`. The physics model itself is unchanged.
+
 This document specifies the near-resonant light-force extension added on
 top of the conservative-trap simulator described in `plan.md`. It covers
 any configuration of laser beams and magnetic fields acting on an

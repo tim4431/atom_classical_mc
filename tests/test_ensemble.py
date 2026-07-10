@@ -7,19 +7,24 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
-from src.constants import (  # noqa: E402
+from atommc.constants import (  # noqa: E402
     BOLTZMANN_CONSTANT_J_PER_K,
     RB85_MASS_KG,
     RB87_MASS_KG,
 )
-from src.ensemble import (  # noqa: E402
+from atommc.ensemble import (  # noqa: E402
     EffusiveBeam,
     HarmonicTrapCloud,
     ThermalCloud,
 )
-from src.simulation import SimulationConfig, run_simulation  # noqa: E402
-from src.trap import GaussianTrap  # noqa: E402
-from src.units import um  # noqa: E402
+from atommc import (  # noqa: E402
+    AtomSystem,
+    GaussianTrap,
+    RB85_D2,
+    SimulationConfig,
+    simulate,
+    um,
+)
 
 
 class ThermalCloudTests(unittest.TestCase):
@@ -78,7 +83,7 @@ class HarmonicTrapCloudTests(unittest.TestCase):
             waist_axial_m=um(5.0),
         )
         cloud = HarmonicTrapCloud(
-            traps=trap, temperature_uK=50.0, mass_kg=RB87_MASS_KG
+            forces=trap, temperature_uK=50.0, mass_kg=RB87_MASS_KG
         )
         sample = cloud.sample(100000, rng)
         # Radial spread tighter than axial (stiffer radial curvature).
@@ -183,7 +188,7 @@ class EffusiveBeamTests(unittest.TestCase):
 
 
 class SimulationIntegrationTests(unittest.TestCase):
-    def test_initial_source_flows_through_run_simulation(self) -> None:
+    def test_initial_source_flows_through_simulate(self) -> None:
         trap = GaussianTrap(
             center_m=(0.0, 0.0, 0.0),
             depth_uK=500.0,
@@ -204,13 +209,12 @@ class SimulationIntegrationTests(unittest.TestCase):
             timestep_s=1.0e-6,
             duration_s=1.0e-4,
             ensemble_size=100,
-            mass_kg=RB85_MASS_KG,
             initial_source=beam,
             reject_initially_lost=False,
             loss_radius_m=50.0e-3,
             random_seed=3,
         )
-        result = run_simulation([trap], config)
+        result = simulate(AtomSystem(species=RB85_D2, modules=[trap]), config)
         self.assertAlmostEqual(
             result.initial_ensemble_weight, beam.window_fraction(), places=12
         )

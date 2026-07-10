@@ -1,6 +1,6 @@
 """Initial-ensemble sources: where the atoms come from before the run.
 
-A `run_simulation` needs starting positions and velocities. Three
+A simulation needs starting positions and velocities. Three
 physically distinct sources cover the cases this simulator cares about,
 all behind one `EnsembleSource.sample(n, rng)` interface returning an
 `EnsembleSample`:
@@ -45,11 +45,8 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .constants import BOLTZMANN_CONSTANT_J_PER_K, RB87_MASS_KG
-from .sampling import (
-    sample_thermal_positions_harmonic,
-    sample_thermal_velocities,
-)
-from .trap import TrapConfig
+from .physics.base import ConservativeForce, total_hessian
+from .units import microkelvin_to_joule
 
 
 @dataclass(frozen=True)
@@ -164,14 +161,14 @@ class ThermalCloud(EnsembleSource):
 
 @dataclass(frozen=True)
 class HarmonicTrapCloud(EnsembleSource):
-    """Equilibrium thermal cloud of conservative traps (covariance k_B T K^-1).
+    """Equilibrium thermal cloud of conservative forces (covariance k_B T K^-1).
 
     Wraps `sample_thermal_positions_harmonic`; this is exactly the default
     ensemble a trapped run uses when no explicit source is given, exposed
     as a source so it can be selected or swapped alongside the others.
     """
 
-    traps: TrapConfig | Iterable[TrapConfig]
+    forces: ConservativeForce | Iterable[ConservativeForce]
     temperature_uK: float
     center_m: ArrayLike | None = None
     time_s: float = 0.0
@@ -180,7 +177,7 @@ class HarmonicTrapCloud(EnsembleSource):
     def sample(self, n: int, rng: np.random.Generator) -> EnsembleSample:
         _require_positive(n)
         positions = sample_thermal_positions_harmonic(
-            self.traps,
+            self.forces,
             self.temperature_uK,
             n,
             rng,
@@ -349,6 +346,115 @@ class EffusiveBeam(EnsembleSource):
         sin2_max = 1.0 - cos_max**2
         sin_theta = np.sqrt(u * sin2_max)
         return np.sqrt(np.clip(1.0 - sin_theta**2, 0.0, 1.0))
+
+
+
+# --------------------------------------------------------------------------
+# Low-level thermal samplers (used by the sources above and by the driver)
+# --------------------------------------------------------------------------
+
+
+def sample_thermal_velocities(
+    temperature_uK: float,
+    ensemble_size: int,
+    rng: np.random.Generator,
+    mass_kg: float = RB87_MASS_KG,
+) -> NDArray[np.float64]:
+    """Sample Maxwell-Boltzmann velocities for a 3D gas."""
+
+    if temperature_uK < 0.0:
+        raise ValueError("temperature_uK must be non-negative.")
+    if ensemble_size <= 0:
+        raise ValueError("ensemble_size must be positive.")
+    if mass_kg <= 0.0:
+        raise ValueError("mass_kg must be positive.")
+
+    sigma = np.sqrt(float(microkelvin_to_joule(temperature_uK)) / mass_kg)
+    return rng.normal(loc=0.0, scale=sigma, size=(ensemble_size, 3))
+
+
+def sample_thermal_positions_harmonic(
+    forces: ConservativeForce | Iterable[ConservativeForce],
+    temperature_uK: float,
+    ensemble_size: int,
+    rng: np.random.Generator,
+    center_m: ArrayLike | None = None,
+    time_s: float = 0.0,
+) -> NDArray[np.float64]:
+    """Sample positions from a local harmonic approximation at `time_s`.
+
+    The covariance is `k_B T K^-1`, where `K` is the potential Hessian at
+    `center_m`. If no center is provided, the deepest trap center at
+    `time_s` is used. The Hessian must be positive definite at the center
+    (note: a bare quadrupole `ZeemanPotential` is linear at its node, so
+    sample such clouds with `ThermalCloud` instead).
+    """
+
+    force_list = _force_list(forces)
+    if not force_list:
+        raise ValueError("At least one force is required for position sampling.")
+    if temperature_uK < 0.0:
+        raise ValueError("temperature_uK must be non-negative.")
+    if ensemble_size <= 0:
+        raise ValueError("ensemble_size must be positive.")
+
+    center = (
+        _default_center(force_list, time_s)
+        if center_m is None
+        else np.asarray(center_m, dtype=float)
+    )
+    if center.shape != (3,):
+        raise ValueError("center_m must be a 3-vector in meters.")
+
+    if temperature_uK == 0.0:
+        return np.repeat(center[np.newaxis, :], ensemble_size, axis=0)
+
+    stiffness = total_hessian(force_list, center, time_s=time_s)
+    stiffness = 0.5 * (stiffness + stiffness.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(stiffness)
+    if np.any(eigenvalues <= 0.0):
+        raise ValueError(
+            "The local trap Hessian is not positive definite at the sampling center."
+        )
+
+    thermal_energy = float(microkelvin_to_joule(temperature_uK))
+    covariance = eigenvectors @ np.diag(thermal_energy / eigenvalues) @ eigenvectors.T
+    covariance = 0.5 * (covariance + covariance.T)
+    return rng.multivariate_normal(mean=center, cov=covariance, size=ensemble_size)
+
+
+def _default_center(
+    forces: list[ConservativeForce], time_s: float = 0.0
+) -> NDArray[np.float64]:
+    """Pick the center of the deepest Gaussian-like trap at `time_s`.
+
+    For non-Gaussian forces (no `depth_uK` attribute) we fall back to the
+    force's `center_at(time_s)`.
+    """
+
+    def depth(force: ConservativeForce) -> float:
+        # MovingGaussianTrap / AstigmaticAODTrap / GriddedTrap expose a ramp;
+        # GaussianTrap and DipoleBeamPotential expose depth_uK directly.
+        ramp = getattr(force, "ramp", None)
+        if ramp is not None:
+            return float(ramp.depth_at(time_s))
+        depth_uK = getattr(force, "depth_uK", None)
+        if depth_uK is not None:
+            return float(depth_uK)
+        return 0.0
+
+    deepest = max(forces, key=depth)
+    if depth(deepest) <= 0.0:
+        raise ValueError("At least one trap with positive depth is required.")
+    return np.asarray(deepest.center_at(time_s), dtype=float)
+
+
+def _force_list(
+    forces: ConservativeForce | Iterable[ConservativeForce],
+) -> list[ConservativeForce]:
+    if isinstance(forces, ConservativeForce):
+        return [forces]
+    return list(forces)
 
 
 # --------------------------------------------------------------------------

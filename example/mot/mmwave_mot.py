@@ -82,18 +82,22 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
-from src.constants import BOLTZMANN_CONSTANT_J_PER_K  # noqa: E402
-from src.ensemble import EffusiveBeam  # noqa: E402
-from src.fields import QuadrupoleMagneticField  # noqa: E402
-from src.internal_state import AdiabaticSteadyState  # noqa: E402
-from src.laser import LaserBeam  # noqa: E402
-from src.light_matter import (  # noqa: E402
+from atommc import (  # noqa: E402
+    AdiabaticSteadyState,
+    AtomSystem,
+    BOLTZMANN_CONSTANT_J_PER_K,
+    EffusiveBeam,
+    LaserBeam,
     LightMatterSystem,
+    LightScattering,
+    QuadrupoleMagneticField,
+    RB85_D2,
+    SimulationConfig,
+    gauss_per_cm,
+    ms,
     polarization_fractions,
+    simulate,
 )
-from src.simulation import SimulationConfig, run_simulation  # noqa: E402
-from src.species import RB85_D2  # noqa: E402
-from src.units import gauss_per_cm, ms  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 RENDER_DIR = os.path.join(HERE, "render")
@@ -488,7 +492,6 @@ def main() -> None:
         timestep_s=2.0e-7,
         duration_s=float(ms(args.duration_ms)),
         ensemble_size=args.atoms,
-        mass_kg=SPECIES.mass_kg,
         initial_source=oven_beam,
         reject_initially_lost=False,
         loss_radius_m=40.0e-3,
@@ -496,9 +499,11 @@ def main() -> None:
         store_trajectories=True,
         trajectory_stride=500,  # sample every 100 us
     )
-    result = run_simulation(
-        [], config, scattering=system, internal_model=AdiabaticSteadyState()
+    atom_system = AtomSystem(
+        species=SPECIES,
+        modules=[LightScattering(system, model=AdiabaticSteadyState())],
     )
+    result = simulate(atom_system, config)
 
     final_r = np.linalg.norm(result.final_positions_m, axis=-1)
     final_v = np.linalg.norm(result.final_velocities_m_per_s, axis=-1)
@@ -556,7 +561,7 @@ def _render_gif(result, system: LightMatterSystem) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
-    from src.visualization import render_cloud_animation
+    from atommc.postprocess.visualization import render_cloud_animation
 
     os.makedirs(RENDER_DIR, exist_ok=True)
     out = os.path.join(RENDER_DIR, "mmwave_mot_capture.gif")

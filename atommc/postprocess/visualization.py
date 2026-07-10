@@ -19,12 +19,12 @@ from .analysis import (
     loss_probability_time_series,
     mean_kinetic_energy_time_series_uK,
 )
-from .constants import RB87_MASS_KG
+from ..constants import RB87_MASS_KG
 from .harmonic import MotionalDecomposition
-from .laser import LaserBeam
-from .ramp import RampSequence
-from .simulation import SimulationResult
-from .trap import TrapConfig, total_potential
+from ..geometry.laser import LaserBeam
+from ..ramp import RampSequence
+from ..driver import SimulationResult
+from ..physics.base import ConservativeForce, total_potential
 
 FramePlane = Literal["xy", "xz", "yz"]
 FrameView = Literal["xy", "xz", "yz", "3d", "split"]
@@ -33,7 +33,7 @@ FrameView = Literal["xy", "xz", "yz", "3d", "split"]
 def plot_transfer_summary(
     result: SimulationResult,
     ramp: RampSequence,
-    static_trap: TrapConfig,
+    static_trap: ConservativeForce,
     max_trajectories: int = 64,
 ):
     """Create the trajectory-focused 2D transfer summary figure.
@@ -53,7 +53,7 @@ def plot_transfer_summary(
 def plot_transfer_trajectory_summary(
     result: SimulationResult,
     ramp: RampSequence,
-    static_trap: TrapConfig,
+    static_trap: ConservativeForce,
     max_trajectories: int = 64,
 ):
     """Create a 2x2 spatial/ramp summary figure for a stored-trajectory run."""
@@ -218,7 +218,7 @@ def plot_transfer_energy_summary(
 def plot_transfer_trajectories_3d(
     result: SimulationResult,
     ramp: RampSequence,
-    static_trap: TrapConfig | None = None,
+    static_trap: ConservativeForce | None = None,
     max_trajectories: int = 96,
 ):
     """Plot atom trajectories and the moving AOD center path in 3D."""
@@ -428,15 +428,15 @@ _PLANE_AXES: dict[FramePlane, tuple[str, str, str]] = {
 
 
 def _moving_trap_at(
-    moving_trap_base: TrapConfig, ramp: RampSequence, time_s: float
-) -> TrapConfig:
+    moving_trap_base: ConservativeForce, ramp: RampSequence, time_s: float
+) -> ConservativeForce:
     """Snapshot the moving trap at one ramp time (mirror of simulation._moving_trap_at)."""
     center, depth = ramp.at(time_s)
     return moving_trap_base.with_center_depth(center, depth)
 
 
-def _trap_list(trap_or_iter) -> list[TrapConfig]:
-    if isinstance(trap_or_iter, TrapConfig):
+def _trap_list(trap_or_iter) -> list[ConservativeForce]:
+    if isinstance(trap_or_iter, ConservativeForce):
         return [trap_or_iter]
     return list(trap_or_iter)
 
@@ -470,7 +470,7 @@ def _interpolate_trajectory_state(
 
 
 def _auto_extent_um(
-    traps: Iterable[TrapConfig],
+    traps: Iterable[ConservativeForce],
     result: SimulationResult | None,
     pad_waists: float = 3.0,
 ) -> tuple[float, float, float, float, float, float]:
@@ -506,7 +506,7 @@ def _auto_extent_um(
 
 def draw_traps_2d(
     ax,
-    traps: Iterable[TrapConfig],
+    traps: Iterable[ConservativeForce],
     *,
     plane: FramePlane = "xy",
     extent_um: tuple[float, float, float, float] | None = None,
@@ -653,7 +653,7 @@ def _depth_alpha_factor(
 
 def draw_tweezer_beams_3d(
     ax,
-    traps: Iterable[TrapConfig],
+    traps: Iterable[ConservativeForce],
     *,
     surface_n: int = 28,
     axial_extent_zR: float = 3.0,
@@ -666,7 +666,7 @@ def draw_tweezer_beams_3d(
     depth_reference_uK: float | None = None,
     show_focal_ring: bool = True,
 ) -> None:
-    """Draw each TrapConfig as a Gaussian-beam hyperboloid (the conventional view).
+    """Draw each ConservativeForce as a Gaussian-beam hyperboloid (the conventional view).
 
     The conventional Gaussian beam is `w(z) = w0 * sqrt(1 + (z/zR)^2)`,
     pinching to `w0 = waist_radial_m` at the focal plane and flaring on
@@ -741,7 +741,7 @@ def draw_tweezer_beams_3d(
 
 def draw_tweezer_beam_side_2d(
     ax,
-    traps: Iterable[TrapConfig],
+    traps: Iterable[ConservativeForce],
     *,
     plane: FramePlane = "xz",
     extent_um: tuple[float, float, float, float] | None = None,
@@ -809,7 +809,7 @@ def draw_tweezer_beam_side_2d(
 
 def draw_trap_ellipsoids_3d(
     ax,
-    traps: Iterable[TrapConfig],
+    traps: Iterable[ConservativeForce],
     *,
     surface_n: int = 24,
     color_static: str = "#ffd700",
@@ -913,8 +913,8 @@ def draw_atom_trails_2d(
 def draw_frame(
     t: float,
     result: SimulationResult,
-    static_traps: TrapConfig | Iterable[TrapConfig],
-    moving_trap_base: TrapConfig,
+    static_traps: ConservativeForce | Iterable[ConservativeForce],
+    moving_trap_base: ConservativeForce,
     ramp: RampSequence,
     *,
     view: FrameView = "split",
@@ -1061,8 +1061,8 @@ def draw_frame(
 
 def render_animation(
     result: SimulationResult,
-    static_traps: TrapConfig | Iterable[TrapConfig],
-    moving_trap_base: TrapConfig,
+    static_traps: ConservativeForce | Iterable[ConservativeForce],
+    moving_trap_base: ConservativeForce,
     ramp: RampSequence,
     output_path: str | Path,
     *,
@@ -1180,7 +1180,7 @@ def render_animation(
 # --- trap-free cloud rendering (light-force / MOT runs) --------------------
 #
 # `draw_frame` / `render_animation` above are built around tweezers: they
-# draw trap potentials and beam envelopes for `TrapConfig`s. Scattering-only
+# draw trap potentials and beam envelopes for `ConservativeForce`s. Scattering-only
 # runs (a MOT, a molasses) have no traps — the interesting picture is the
 # cloud itself: atom positions colored by speed, next to the cooling curve.
 

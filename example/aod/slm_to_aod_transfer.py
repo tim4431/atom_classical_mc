@@ -18,23 +18,30 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
-from src.analysis import (  # noqa: E402
+from atommc.postprocess.analysis import (  # noqa: E402
     capture_probability,
     classify_final_trap_occupation,
     loss_probability_time_series,
     mean_kinetic_energy_time_series_uK,
     survival_probability_time_series,
 )
-from src.harmonic import (  # noqa: E402
+from atommc.postprocess.harmonic import (  # noqa: E402
     approximate_harmonic_potential,
     decompose_motion_into_harmonic_modes,
     summarize_mode_occupations,
 )
-from src.ramp import RampSequence  # noqa: E402
-from src.simulation import SimulationConfig, run_simulation  # noqa: E402
-from src.trap import GaussianTrap  # noqa: E402
-from src.units import ms, um  # noqa: E402
-from src.visualization import (  # noqa: E402
+from atommc import (  # noqa: E402
+    AtomSystem,
+    GaussianTrap,
+    MovingGaussianTrap,
+    RB87_D2,
+    RampSequence,
+    SimulationConfig,
+    ms,
+    simulate,
+    um,
+)
+from atommc.postprocess.visualization import (  # noqa: E402
     plot_transfer_energy_summary,
     plot_transfer_trajectories_3d,
     plot_transfer_trajectory_summary,
@@ -111,13 +118,13 @@ def analyze_transfer_result(slm_trap, aod_trap_base, ramp, config, result):
         final_aod_center_m, final_aod_depth_uK
     )
     occupation = classify_final_trap_occupation(
-        result, slm_trap, final_aod_trap, mass_kg=config.mass_kg
+        result, slm_trap, final_aod_trap, mass_kg=RB87_D2.mass_kg
     )
     initial_slm_harmonic = approximate_harmonic_potential(
-        slm_trap, slm_trap.center_m, mass_kg=config.mass_kg
+        slm_trap, slm_trap.center_m, mass_kg=RB87_D2.mass_kg
     )
     final_aod_harmonic = approximate_harmonic_potential(
-        final_aod_trap, final_aod_trap.center_m, mass_kg=config.mass_kg
+        final_aod_trap, final_aod_trap.center_m, mass_kg=RB87_D2.mass_kg
     )
     initial_slm_modes = decompose_motion_into_harmonic_modes(
         initial_slm_harmonic,
@@ -132,14 +139,14 @@ def analyze_transfer_result(slm_trap, aod_trap_base, ramp, config, result):
         "final_aod_depth_uK": final_aod_depth_uK,
         "final_aod_trap": final_aod_trap,
         "aod_capture": capture_probability(
-            result, final_aod_trap, mass_kg=config.mass_kg
+            result, final_aod_trap, mass_kg=RB87_D2.mass_kg
         ),
         "aod_capture_given_survival": capture_probability(
-            result, final_aod_trap, mass_kg=config.mass_kg, conditional_on_survival=True
+            result, final_aod_trap, mass_kg=RB87_D2.mass_kg, conditional_on_survival=True
         ),
         "occupation": occupation,
         "kinetic_trace_uK": mean_kinetic_energy_time_series_uK(
-            result, mass_kg=config.mass_kg
+            result, mass_kg=RB87_D2.mass_kg
         ),
         "survival_trace": survival_probability_time_series(result),
         "loss_trace": loss_probability_time_series(result),
@@ -196,7 +203,9 @@ def print_transfer_report(config, result, analysis) -> None:
 
 def main() -> None:
     slm_trap, aod_trap_base, ramp, config = build_transfer_problem()
-    result = run_simulation(slm_trap, aod_trap_base, ramp, config)
+    aod_trap = MovingGaussianTrap(template=aod_trap_base, ramp=ramp)
+    system = AtomSystem(species=RB87_D2, modules=[slm_trap, aod_trap])
+    result = simulate(system, config)
     analysis = analyze_transfer_result(slm_trap, aod_trap_base, ramp, config, result)
     print_transfer_report(config, result, analysis)
 

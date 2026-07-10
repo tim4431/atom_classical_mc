@@ -10,7 +10,7 @@ different `LaserBeam` / `MagneticFieldConfig` sets.
 Its single job is geometry reduction: collapse beam profiles, Doppler
 shifts, Zeeman shifts, and polarization projections into the per-atom,
 per-beam one-way stimulated rate matrix `W` (s^-1) consumed by the
-internal-state backends in `src.internal_state`:
+internal-state backends in `physics.internal_state`:
 
 - stimulated absorption from beam `b` occurs at rate `W_b * rho_gg`,
 - stimulated emission into beam `b` at rate `W_b * rho_ee`,
@@ -34,7 +34,7 @@ and saturation competition between beams is handled by the internal
 state backend through `p = W_tot / (Gamma + 2 W_tot)`. Beams are
 mutually incoherent: no standing-wave or polarization-gradient
 (sub-Doppler) physics, and the dipole force of the near-resonant light
-is not included (use `TrapConfig` for conservative dipole potentials).
+is not included (use `DipoleBeamPotential` for conservative dipole potentials).
 """
 
 from __future__ import annotations
@@ -45,10 +45,11 @@ from typing import Sequence
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from .constants import HBAR_J_S
-from .fields import MagneticFieldConfig, total_magnetic_field
-from .laser import LaserBeam
-from .species import AtomSpecies
+from ..constants import HBAR_J_S
+from ..geometry.fields import MagneticFieldConfig, total_magnetic_field
+from .internal_state import steady_state_excited_fraction
+from ..geometry.laser import LaserBeam
+from ..species import AtomSpecies
 
 
 @dataclass(frozen=True)
@@ -175,7 +176,7 @@ class LightMatterSystem:
 
         w = self.stimulated_rates(positions_m, velocities_m_per_s, time_s=time_s)
         w_tot = np.sum(w, axis=-1)
-        p = w_tot / (self.species.linewidth_rad_s + 2.0 * w_tot + 1.0e-300)
+        p = steady_state_excited_fraction(w_tot, self.species.linewidth_rad_s)
         net_rates = w * (1.0 - 2.0 * p)[..., np.newaxis]
         hbar_k = HBAR_J_S * self.species.wavenumber_rad_per_m
         return hbar_k * (net_rates @ self.beam_directions)

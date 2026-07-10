@@ -27,18 +27,14 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
-from src.constants import RB87_MASS_KG  # noqa: E402
-from src.sampling import (  # noqa: E402
+from atommc.constants import RB87_MASS_KG  # noqa: E402
+from atommc.ensemble import (  # noqa: E402
     sample_thermal_positions_harmonic,
     sample_thermal_velocities,
 )
-from src.trap import (  # noqa: E402
-    GaussianTrap,
-    GriddedTrap,
-    total_force,
-    total_potential,
-)
-from src.units import joule_to_microkelvin, um  # noqa: E402
+from atommc.physics.base import total_force, total_potential  # noqa: E402
+from atommc.physics.traps import GaussianTrap, GriddedTrap  # noqa: E402
+from atommc.units import joule_to_microkelvin, um  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RENDER_DIR = os.path.join(HERE, "render")

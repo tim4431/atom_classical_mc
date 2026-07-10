@@ -23,16 +23,20 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, ROOT)
 
-from src.analysis import bound_to_trap  # noqa: E402
-from src.constants import RB87_MASS_KG  # noqa: E402
-from src.ramp import RampSequence  # noqa: E402
-from src.simulation import (  # noqa: E402
+from atommc.postprocess.analysis import bound_to_trap  # noqa: E402
+from atommc.constants import RB87_MASS_KG  # noqa: E402
+from atommc.ramp import RampSequence  # noqa: E402
+from atommc import (  # noqa: E402
+    AtomSystem,
+    GaussianTrap,
+    GriddedTrap,
+    RB87_D2,
     SimulationConfig,
     SimulationResult,
-    run_simulation,
+    simulate,
+    total_potential,
 )
-from src.trap import GaussianTrap, GriddedTrap, total_potential  # noqa: E402
-from src.units import joule_to_microkelvin, microkelvin_to_joule, ms, um  # noqa: E402
+from atommc.units import joule_to_microkelvin, microkelvin_to_joule, ms, um  # noqa: E402
 
 RENDER_DIR = os.path.join(HERE, "render")
 os.makedirs(RENDER_DIR, exist_ok=True)
@@ -211,7 +215,7 @@ def run_flyby(
     ramp = build_flyby_ramp(transverse_distance_um, duration_s=duration_s)
     ripa = build_ripa_trap(grid_data, depth_uK, ramp, potential_j=potential_j)
     config = build_config(duration_s=duration_s)
-    result = run_simulation([slm, ripa], config)
+    result = simulate(AtomSystem(species=RB87_D2, modules=[slm, ripa]), config)
     return result, ramp, slm, ripa
 
 
@@ -505,7 +509,7 @@ def run_flyby_with_trajectories(
         store_trajectories=True,
         trajectory_stride=ANIM_TRAJECTORY_STRIDE,
     )
-    result = run_simulation([slm, ripa], config)
+    result = simulate(AtomSystem(species=RB87_D2, modules=[slm, ripa]), config)
     return result, ramp, slm, ripa
 
 
@@ -524,7 +528,7 @@ def render_flyby_gif(
 
     Works for any `TrapConfig` because it queries `total_potential` directly
     at each frame's time (no Gaussian-envelope side-view), unlike
-    `src.visualization.render_animation` which is Gaussian-specific.
+    `atommc.postprocess.visualization.render_animation` which is Gaussian-specific.
     """
 
     import matplotlib.pyplot as plt

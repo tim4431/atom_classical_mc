@@ -1,11 +1,10 @@
-"""Trap potentials, possibly time-varying.
+"""Optical trap potentials, possibly time-varying.
 
-`TrapConfig` is the abstract interface for any 3D potential `U(r, t)`. Four
+All traps are `ConservativeForce` physics modules (see `physics.base`). Four
 concrete implementations are provided:
 
-- `GaussianTrap` — cylindrically symmetric, time-independent. Was the
-  original `TrapConfig`. Use it for static SLM traps and for snapshots of
-  moving traps frozen at one time.
+- `GaussianTrap` — cylindrically symmetric, time-independent. Use it for
+  static SLM traps and for snapshots of moving traps frozen at one time.
 - `MovingGaussianTrap` — cylindrically symmetric, with center and depth
   driven by a `RampSequence`.
 - `AstigmaticAODTrap` — astigmatic Gaussian whose `x` and `y` axial focal
@@ -15,97 +14,24 @@ concrete implementations are provided:
   at construction. Use for numerically-defined fields or to cache an
   expensive analytic potential.
 
-`total_potential`, `total_force`, `total_hessian` accept any iterable of
-`TrapConfig` and a time, and linearly sum the results.
+`total_potential`, `total_force`, `total_hessian` live in `physics.base`
+and linearly sum any iterable of `ConservativeForce` at a chosen time.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Callable, Iterable
+from typing import Callable
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from .ramp import RampSequence
-from .units import microkelvin_to_joule
-
-
-class TrapConfig(ABC):
-    """Abstract trap potential `U(r, t)`.
-
-    Subclasses must provide `potential` and `center_at`. Default `force` and
-    `hessian` use central finite differences; subclasses override them when
-    they have analytic gradients.
-    """
-
-    name: str = "trap"
-
-    @abstractmethod
-    def center_at(self, time_s: float) -> NDArray[np.float64]:
-        """Return the natural anchor point (e.g. the trap minimum) at `t`."""
-
-    @abstractmethod
-    def potential(
-        self, positions_m: ArrayLike, time_s: float = 0.0
-    ) -> NDArray[np.float64]:
-        """Evaluate `U(r, t)` in joules. Last axis of `positions_m` is 3."""
-
-    def force(
-        self, positions_m: ArrayLike, time_s: float = 0.0
-    ) -> NDArray[np.float64]:
-        """Evaluate `F = -grad U` in newtons. Default: central differences."""
-
-        positions = _as_positions(positions_m)
-        step = self._finite_difference_step()
-        force = np.zeros_like(positions, dtype=float)
-        basis = np.eye(3)
-        for axis in range(3):
-            delta = step * basis[axis]
-            plus = self.potential(positions + delta, time_s=time_s)
-            minus = self.potential(positions - delta, time_s=time_s)
-            force[..., axis] = -(plus - minus) / (2.0 * step)
-        return force
-
-    def hessian(
-        self, position_m: ArrayLike, time_s: float = 0.0
-    ) -> NDArray[np.float64]:
-        """Hessian `d^2 U / dr_i dr_j` in J/m^2. Default: central differences."""
-
-        position = np.asarray(position_m, dtype=float)
-        if position.shape != (3,):
-            raise ValueError("position_m must be a 3-vector in meters.")
-        step = self._finite_difference_step()
-        basis = np.eye(3)
-        u_center = float(self.potential(position, time_s=time_s))
-        h = np.zeros((3, 3), dtype=float)
-        for i in range(3):
-            plus_i = float(self.potential(position + step * basis[i], time_s=time_s))
-            minus_i = float(self.potential(position - step * basis[i], time_s=time_s))
-            h[i, i] = (plus_i - 2.0 * u_center + minus_i) / (step * step)
-        for i in range(3):
-            for j in range(i + 1, 3):
-                d_i = step * basis[i]
-                d_j = step * basis[j]
-                mixed = (
-                    float(self.potential(position + d_i + d_j, time_s=time_s))
-                    - float(self.potential(position + d_i - d_j, time_s=time_s))
-                    - float(self.potential(position - d_i + d_j, time_s=time_s))
-                    + float(self.potential(position - d_i - d_j, time_s=time_s))
-                ) / (4.0 * step * step)
-                h[i, j] = mixed
-                h[j, i] = mixed
-        return h
-
-    def _finite_difference_step(self) -> float:
-        """Override if a class has a natural length scale (e.g. waist)."""
-
-        return 1.0e-9
-
+from ..ramp import RampSequence
+from ..units import microkelvin_to_joule
+from .base import ConservativeForce, _as_positions
 
 @dataclass(frozen=True)
-class GaussianTrap(TrapConfig):
+class GaussianTrap(ConservativeForce):
     """Cylindrically symmetric red-detuned 3D Gaussian, time-independent.
 
     `U(r) = -U0 exp(-2 (x^2 + y^2) / wr^2 - 2 z^2 / wz^2)`.
@@ -200,7 +126,7 @@ class GaussianTrap(TrapConfig):
 
 
 @dataclass(frozen=True)
-class MovingGaussianTrap(TrapConfig):
+class MovingGaussianTrap(ConservativeForce):
     """Cylindrically symmetric Gaussian whose center and depth follow a ramp."""
 
     template: GaussianTrap = field(default_factory=GaussianTrap)
@@ -237,7 +163,7 @@ class MovingGaussianTrap(TrapConfig):
 
 
 @dataclass(frozen=True)
-class AstigmaticAODTrap(TrapConfig):
+class AstigmaticAODTrap(ConservativeForce):
     """Astigmatic Gaussian AOD trap with velocity-coupled focal lensing.
 
     Reproduces the `aod_slm_movement_v2` model: the radial waist is
@@ -337,7 +263,7 @@ class AstigmaticAODTrap(TrapConfig):
 
 
 @dataclass(frozen=True)
-class GriddedTrap(TrapConfig):
+class GriddedTrap(ConservativeForce):
     """Potential tabulated on a uniform 3D grid in the trap-local frame.
 
     The grid stores `U[i, j, k]` in joules on a regular lattice that spans
@@ -458,7 +384,7 @@ class GriddedTrap(TrapConfig):
     @classmethod
     def from_trap(
         cls,
-        source: TrapConfig,
+        source: ConservativeForce,
         bounds_m: ArrayLike,
         shape: tuple[int, int, int],
         time_s: float = 0.0,
@@ -466,7 +392,7 @@ class GriddedTrap(TrapConfig):
         interpolation: str = "tricubic",
         name: str | None = None,
     ) -> "GriddedTrap":
-        """Cache an existing `TrapConfig` as a gridded copy.
+        """Cache an existing `ConservativeForce` as a gridded copy.
 
         Samples `source` at `time_s` over a box defined by `bounds_m`
         relative to `source.center_at(time_s)`. The resulting gridded
@@ -659,57 +585,3 @@ def _evaluate_grid(
     grad = np.stack([gx, gy, gz], axis=-1)
     grad = np.where(valid[:, None], grad, 0.0)
     return grad.reshape(leading_shape + (3,))
-
-
-def total_potential(
-    traps: TrapConfig | Iterable[TrapConfig],
-    positions_m: ArrayLike,
-    time_s: float = 0.0,
-) -> NDArray[np.float64]:
-    """Sum potentials of one or more traps at `time_s`."""
-
-    positions = _as_positions(positions_m)
-    out = np.zeros(positions.shape[:-1], dtype=float)
-    for trap in _trap_list(traps):
-        out = out + trap.potential(positions, time_s=time_s)
-    return out
-
-
-def total_force(
-    traps: TrapConfig | Iterable[TrapConfig],
-    positions_m: ArrayLike,
-    time_s: float = 0.0,
-) -> NDArray[np.float64]:
-    """Sum forces of one or more traps at `time_s`."""
-
-    positions = _as_positions(positions_m)
-    out = np.zeros_like(positions, dtype=float)
-    for trap in _trap_list(traps):
-        out = out + trap.force(positions, time_s=time_s)
-    return out
-
-
-def total_hessian(
-    traps: TrapConfig | Iterable[TrapConfig],
-    position_m: ArrayLike,
-    time_s: float = 0.0,
-) -> NDArray[np.float64]:
-    """Sum Hessians of one or more traps at `time_s` and one position."""
-
-    out = np.zeros((3, 3), dtype=float)
-    for trap in _trap_list(traps):
-        out = out + trap.hessian(position_m, time_s=time_s)
-    return out
-
-
-def _trap_list(traps: TrapConfig | Iterable[TrapConfig]) -> list[TrapConfig]:
-    if isinstance(traps, TrapConfig):
-        return [traps]
-    return list(traps)
-
-
-def _as_positions(positions_m: ArrayLike) -> NDArray[np.float64]:
-    positions = np.asarray(positions_m, dtype=float)
-    if positions.shape[-1:] != (3,):
-        raise ValueError("positions must have final dimension 3.")
-    return positions

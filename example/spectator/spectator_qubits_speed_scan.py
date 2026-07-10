@@ -19,8 +19,8 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
-from src.constants import RB87_MASS_KG  # noqa: E402
-from src.units import microkelvin_to_joule  # noqa: E402
+from atommc.constants import RB87_MASS_KG  # noqa: E402
+from atommc.units import microkelvin_to_joule  # noqa: E402
 
 from example.spectator.spectator_qubits import (  # noqa: E402
     AOD_WAIST_RADIAL_UM,

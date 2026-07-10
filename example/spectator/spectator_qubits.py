@@ -29,16 +29,19 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
-from src.analysis import bound_to_trap  # noqa: E402
-from src.constants import RB87_MASS_KG  # noqa: E402
-from src.ramp import RampSequence  # noqa: E402
-from src.simulation import (  # noqa: E402
+from atommc.postprocess.analysis import bound_to_trap  # noqa: E402
+from atommc.constants import RB87_MASS_KG  # noqa: E402
+from atommc.ramp import RampSequence  # noqa: E402
+from atommc import (  # noqa: E402
+    AtomSystem,
+    GaussianTrap,
+    MovingGaussianTrap,
+    RB87_D2,
     SimulationConfig,
     SimulationResult,
-    run_simulation,
+    simulate,
 )
-from src.trap import GaussianTrap  # noqa: E402
-from src.units import ms, um  # noqa: E402
+from atommc.units import ms, um  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 RENDER_DIR = os.path.join(HERE, "render")
@@ -156,7 +159,9 @@ def run_flyby(
         ensemble_size=ensemble_size,
         duration_s=duration_s,
     )
-    result = run_simulation(slm, aod_base, ramp, config)
+    aod = MovingGaussianTrap(template=aod_base, ramp=ramp)
+    system = AtomSystem(species=RB87_D2, modules=[slm, aod])
+    result = simulate(system, config)
     return result, ramp, slm, aod_base
 
 

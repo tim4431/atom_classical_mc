@@ -31,7 +31,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 ATOM_ROOT = HERE.parents[2]
-# Put atom_classical_mc's repo root on the path first so that `from src.* ...`
+# Put atom_classical_mc's repo root on the path first so that `from atommc.* ...`
 # resolves to *this* project, not the (also `src/`-shaped) vipa_focus_simulation
 # library that lives under lib/. The RIPA code we need was copied into
 # example/spectator/ripa/ripa_lib/ so it is importable by a non-clashing package name.
@@ -40,8 +40,8 @@ if str(ATOM_ROOT) not in sys.path:
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from src.trap import GriddedTrap  # noqa: E402
-from src.units import joule_to_microkelvin, microkelvin_to_joule  # noqa: E402
+from atommc.physics.traps import GriddedTrap  # noqa: E402
+from atommc.units import joule_to_microkelvin, microkelvin_to_joule  # noqa: E402
 from ripa_lib.crosssections import crosssection_xy  # noqa: E402
 from ripa_lib.vipa_focus import PARAMS_10_TWZ, vipa_rays  # noqa: E402
 

@@ -1,5 +1,11 @@
 # Classical Monte Carlo Atom Transfer Simulator
 
+> **Note (2026-07):** the API examples in this document predate the
+> multiphysics restructure — the package is now `atommc`, traps are
+> `ConservativeForce` modules on an `AtomSystem`, and `run_simulation`
+> became `simulate(system, config)`. See `doc/multiphysics_plan.md`.
+> The physics model itself is unchanged.
+
 ## Summary
 
 This project implements a pure-Python library for estimating atom heating and

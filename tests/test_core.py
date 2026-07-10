@@ -7,43 +7,50 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
-from src.analysis import (  # noqa: E402
+from atommc.postprocess.analysis import (  # noqa: E402
     capture_probability,
     classify_final_trap_occupation,
     loss_probability_time_series,
     mean_kinetic_energy_time_series_uK,
     survival_probability_time_series,
 )
-from src.constants import (  # noqa: E402
+from atommc.constants import (  # noqa: E402
     BOLTZMANN_CONSTANT_J_PER_K,
     HBAR_J_S,
     RB87_MASS_KG,
 )
-from src.harmonic import (  # noqa: E402
+from atommc.postprocess.harmonic import (  # noqa: E402
     approximate_harmonic_potential,
     approximate_harmonic_potential_from_callable,
     coherent_fock_probabilities,
     decompose_motion_into_harmonic_modes,
     summarize_mode_occupations,
 )
-from src.ramp import (  # noqa: E402
-    CONST_JERK,
-    LINEAR,
+from atommc import (  # noqa: E402
     QUINTIC_MIN_JERK,
-    RampSequence,
-    arb_fifth_poly,
-)
-from src.sampling import sample_thermal_velocities  # noqa: E402
-from src.simulation import SimulationConfig, run_simulation  # noqa: E402
-from src.trap import (  # noqa: E402
     AstigmaticAODTrap,
+    AtomSystem,
     GaussianTrap,
     GriddedTrap,
     MovingGaussianTrap,
+    RB87_D2,
+    RampSequence,
+    SimulationConfig,
+    arb_fifth_poly,
+    microkelvin_to_joule,
+    ms,
+    sample_thermal_velocities,
+    simulate,
     total_force,
     total_potential,
+    um,
 )
-from src.units import microkelvin_to_joule, ms, um  # noqa: E402
+
+
+def simulate_traps(traps, config):
+    """Run the given conservative traps as an Rb87 AtomSystem."""
+
+    return simulate(AtomSystem(species=RB87_D2, modules=list(traps)), config)
 
 
 class CorePhysicsTests(unittest.TestCase):
@@ -174,15 +181,15 @@ class CorePhysicsTests(unittest.TestCase):
             random_seed=7,
         )
 
-        # Legacy 4-positional-arg form still works.
-        result = run_simulation(static_trap, moving_base, ramp, config)
+        moving = MovingGaussianTrap(template=moving_base, ramp=ramp)
+        result = simulate_traps([static_trap, moving], config)
         self.assertGreater(result.survival_probability, 0.98)
         self.assertLess(abs(result.mean_energy_gain_uK), 0.15)
         self.assertEqual(result.initial_positions_m.shape, (128, 3))
         self.assertEqual(result.initial_velocities_m_per_s.shape, (128, 3))
         self.assertTrue(np.all(result.initial_energies_uK < 0.0))
 
-    def test_run_simulation_accepts_traps_list(self):
+    def test_simulate_accepts_multiple_forces(self):
         static_trap = GaussianTrap(
             center_m=[0.0, 0.0, 0.0],
             waist_radial_m=float(um(2.0)),
@@ -208,7 +215,7 @@ class CorePhysicsTests(unittest.TestCase):
             ensemble_size=64,
             random_seed=7,
         )
-        result = run_simulation([static_trap, moving], config)
+        result = simulate_traps([static_trap, moving], config)
         self.assertGreater(result.survival_probability, 0.98)
         # Both temperature variants should be populated.
         self.assertFalse(np.isnan(result.final_temperature_uK_survivors))
@@ -314,10 +321,8 @@ class CorePhysicsTests(unittest.TestCase):
             centers_m=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
             depths_uK=[0.0, 0.0],
         )
-        result = run_simulation(
-            static_trap,
-            moving_base,
-            ramp,
+        result = simulate_traps(
+            [static_trap, MovingGaussianTrap(template=moving_base, ramp=ramp)],
             SimulationConfig(
                 initial_temperature_uK=4.0,
                 timestep_s=1.0e-7,
@@ -386,20 +391,16 @@ class CorePhysicsTests(unittest.TestCase):
             random_seed=11,
             loss_radius_m=20.0e-6,
         )
-        slow = run_simulation(
-            static_trap,
-            moving_base,
-            slow_ramp,
+        slow = simulate_traps(
+            [static_trap, MovingGaussianTrap(template=moving_base, ramp=slow_ramp)],
             SimulationConfig(
                 timestep_s=2.5e-7,
                 duration_s=float(ms(0.5)),
                 **common,
             ),
         )
-        fast = run_simulation(
-            static_trap,
-            moving_base,
-            fast_ramp,
+        fast = simulate_traps(
+            [static_trap, MovingGaussianTrap(template=moving_base, ramp=fast_ramp)],
             SimulationConfig(
                 timestep_s=2.0e-8,
                 duration_s=2.0e-6,
@@ -509,8 +510,8 @@ class AstigmaticAODTests(unittest.TestCase):
             ramp=ramp,
             dxdt2z=0.025 / 4.0 / 650.0,
         )
-        cyl_result = run_simulation([cyl_trap], common_config)
-        lensing_result = run_simulation([lensing_trap], common_config)
+        cyl_result = simulate_traps([cyl_trap], common_config)
+        lensing_result = simulate_traps([lensing_trap], common_config)
         self.assertGreater(
             lensing_result.mean_energy_gain_uK, cyl_result.mean_energy_gain_uK
         )
